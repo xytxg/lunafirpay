@@ -422,7 +422,7 @@ router.post('/merchants/reject', requireProviderRamPermission('merchant'), async
 router.post('/merchants/update', requireProviderRamPermission('merchant'), async (req, res) => {
   try {
     const ramUser = req.ramUser;
-    const { merchant_id, name, remark, fee_rate, fee_rates, fee_payer, status, pay_group_id } = req.body;
+    const { merchant_id, remark, fee_rate, fee_rates, fee_payer, status, pay_group_id } = req.body;
 
     // 检查是否有 channel 权限（用于修改费率和支付组）
     const hasChannelPermission = !ramUser || 
@@ -431,11 +431,7 @@ router.post('/merchants/update', requireProviderRamPermission('merchant'), async
     const updates = [];
     const params = [];
 
-    // 商户名和备注可以直接修改
-    if (name !== undefined) {
-      updates.push('name = ?');
-      params.push(name || null);
-    }
+    // 备注可以直接修改
     if (remark !== undefined) {
       updates.push('remark = ?');
       params.push(remark || null);
