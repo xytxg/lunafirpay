@@ -1183,14 +1183,14 @@
               } else if (data.alipay_h5) {
                 // 支付宝H5唤起APP - 在当前页面显示
                 showAlipayH5(data.alipay_h5.code_url, data.alipay_h5.money || '<%= order.money %>');
-              } else if (data.pay_url) {
-                // 普通支付 - 跳转到支付页面
-                window.location.href = data.pay_url;
               } else if (data.qrcode) {
-                // 普通支付二维码 - 在当前页面显示
+                // 普通支付二维码 - 在当前页面显示（优先于跳转）
                 var activeMethod = document.querySelector('.payment-method.active');
                 var payTypeName = activeMethod ? activeMethod.querySelector('.method-name').textContent : '';
                 showQrcode(data.qrcode, payTypeName);
+              } else if (data.pay_url) {
+                // 普通支付 - 跳转到支付页面
+                window.location.href = data.pay_url;
               }
             } else {
               alert(data.msg || '支付失败，请稍后重试');

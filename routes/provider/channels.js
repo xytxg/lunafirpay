@@ -7,6 +7,46 @@ const db = require('../../config/database');
 const pluginLoader = require('../../utils/pluginLoader');
 const { requireProviderRamPermission } = require('../auth');
 
+/**
+ * 验证 apptype 是否同一支付类型只选择了一个
+ * apptype 格式为数组: ['alipay_1', 'wxpay_2'] 或 ['1', '2']（通用select）
+ * 规则：每种支付类型（alipay/wxpay/qqpay/bank/jdpay/paypal/ecny）只能选择一个
+ */
+function validateApptypeExclusive(apptypeArray) {
+  if (!Array.isArray(apptypeArray) || apptypeArray.length === 0) {
+    return { valid: true };
+  }
+  
+  const typeLabels = {
+    alipay: '支付宝',
+    wxpay: '微信',
+    qqpay: 'QQ钱包',
+    bank: '网银',
+    jdpay: '京东',
+    paypal: 'PayPal',
+    ecny: '数币'
+  };
+  
+  const typeCount = {};
+  
+  for (const item of apptypeArray) {
+    // 解析格式：alipay_1 或 1（通用）
+    const match = item.match(/^(alipay|wxpay|qqpay|bank|jdpay|paypal|ecny)_(.+)$/);
+    if (match) {
+      const type = match[1];
+      typeCount[type] = (typeCount[type] || 0) + 1;
+      if (typeCount[type] > 1) {
+        return { 
+          valid: false, 
+          msg: `${typeLabels[type] || type}支付方式只能选择一种` 
+        };
+      }
+    }
+  }
+  
+  return { valid: true };
+}
+
 // 获取支付通道列表（需要 channel 权限）
 router.get('/channels', requireProviderRamPermission('channel'), async (req, res) => {
   try {
@@ -99,6 +139,11 @@ router.post('/channels/create', requireProviderRamPermission('channel'), async (
       try {
         configObj = typeof config === 'string' ? JSON.parse(config) : config;
         if (configObj.apptype && Array.isArray(configObj.apptype)) {
+          // 验证同一支付类型只能选择一种方式
+          const validation = validateApptypeExclusive(configObj.apptype);
+          if (!validation.valid) {
+            return res.json({ code: -1, msg: validation.msg });
+          }
           apptypeStr = configObj.apptype.join(',');
         }
       } catch (e) {
@@ -194,6 +239,11 @@ router.post('/channels/update', requireProviderRamPermission('channel'), async (
       try {
         const configObj = typeof config === 'string' ? JSON.parse(config) : config;
         if (configObj.apptype && Array.isArray(configObj.apptype)) {
+          // 验证同一支付类型只能选择一种方式
+          const validation = validateApptypeExclusive(configObj.apptype);
+          if (!validation.valid) {
+            return res.json({ code: -1, msg: validation.msg });
+          }
           updates.push('apptype = ?');
           params.push(configObj.apptype.join(','));
         }

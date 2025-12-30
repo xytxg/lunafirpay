@@ -638,10 +638,8 @@ router.all('/submit', async (req, res) => {
     });
     const tradeNo = orderResult.tradeNo;
 
-    // 重定向到收银台
-    const baseUrl = await systemConfig.getApiEndpoint();
-    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
-    res.redirect(cashierUrl);
+    // 重定向到收银台（使用相对路径）
+    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}`);
 
   } catch (error) {
     console.error('V1 Submit Error:', error);
@@ -727,8 +725,10 @@ router.all('/mapi', async (req, res) => {
     });
     const tradeNo = orderResult.tradeNo;
 
-    // 返回支付信息
-    const baseUrl = await systemConfig.getApiEndpoint();
+    // 返回支付信息（使用请求的域名而不是配置的API端点）
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
     const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
     res.json({
       code: 1,
@@ -950,8 +950,10 @@ router.all('/create', async (req, res) => {
     let payUrl = '';
     let payType = 'jump';
     
-    // 获取基础URL
-    const baseUrl = await systemConfig.getApiEndpoint();
+    // 获取基础URL（使用请求的域名）
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
 
     // 根据不同的method类型生成不同的支付信息
     switch (methodType) {
@@ -1623,8 +1625,10 @@ router.post('/dopay', async (req, res) => {
       console.error('解析通道配置失败:', e);
     }
 
-    // 获取基础URL
-    const baseUrl = await systemConfig.getApiEndpoint();
+    // 获取基础URL（使用请求的域名）
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
     
     // 获取实际支付金额（已锁定订单使用数据库中的值）
     const realMoney = parseFloat(order.real_money || order.money) || 0;
@@ -1708,6 +1712,31 @@ router.post('/dopay', async (req, res) => {
     }
 
     if (result.type === 'jump') {
+      // 检查是否是跳转到 qrcode 页面，如果是则直接获取二维码返回
+      const qrcodeMatch = result.url.match(/^\/pay\/qrcode(?:pc)?\/([^\/\?]+)/);
+      if (qrcodeMatch && typeof plugin.qrcode === 'function') {
+        try {
+          // 调用插件的 qrcode 方法获取二维码
+          const conf = {
+            siteurl: baseUrl + '/',
+            localurl: baseUrl + '/',
+            http_host: req.get('host')
+          };
+          const qrcodeResult = await plugin.qrcode(pluginConfig, orderInfo, conf);
+          
+          if (qrcodeResult.type === 'qrcode') {
+            return res.json({ code: 0, msg: 'success', qrcode: qrcodeResult.url });
+          } else if (qrcodeResult.type === 'jump') {
+            // 如果 qrcode 方法也返回跳转（如支付宝内打开），则返回跳转
+            return res.json({ code: 0, msg: 'success', pay_url: qrcodeResult.url });
+          } else if (qrcodeResult.type === 'error') {
+            return res.json({ code: 1, msg: qrcodeResult.msg || '获取二维码失败' });
+          }
+        } catch (e) {
+          console.error('获取二维码失败:', e);
+          // 如果获取二维码失败，降级为跳转
+        }
+      }
       return res.json({ code: 0, msg: 'success', pay_url: result.url });
     }
 
@@ -2160,7 +2189,8 @@ router.get('/qrcode', async (req, res) => {
       return res.redirect(`/api/pay/success?trade_no=${trade_no}`);
     }
 
-    res.render('qrcode', { order, qrcodeUrl: url });
+    // 重定向到收银台页面，二维码将在收银台内显示
+    res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
 
   } catch (error) {
     console.error('QRCode Page Error:', error);
@@ -2379,10 +2409,8 @@ async function handleSubmit(req, res) {
     });
     const tradeNo = orderResult.tradeNo;
 
-    // 重定向到收银台
-    const baseUrl = await systemConfig.getApiEndpoint();
-    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
-    res.redirect(cashierUrl);
+    // 重定向到收银台（使用相对路径）
+    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}`);
 
   } catch (error) {
     console.error('Submit Error:', error);
@@ -2516,8 +2544,10 @@ async function handleMapi(req, res) {
       );
     }
 
-    // 根据method决定返回方式
-    const baseUrl = await systemConfig.getApiEndpoint();
+    // 根据method决定返回方式（使用请求的域名）
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
     const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
     const methodType = method || 'web';
     
@@ -2798,8 +2828,10 @@ router.all('/:func/:trade_no', async (req, res) => {
       console.error('解析通道配置失败:', e);
     }
 
-    // 获取基础URL和系统配置
-    const baseUrl = await systemConfig.getApiEndpoint();
+    // 获取基础URL（使用请求的域名）和系统配置
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
     const sitename = await systemConfig.getConfig('sitename', '');
     
     // 对于 jspay，需要获取用户 openid
@@ -2884,12 +2916,8 @@ router.all('/:func/:trade_no', async (req, res) => {
     }
 
     if (result.type === 'qrcode') {
-      // 使用通用的 qrcode.ejs 模板
-      return res.render('qrcode', {
-        qrcodeUrl: result.url,
-        order,
-        trade_no
-      });
+      // 重定向到收银台页面，二维码将在收银台内显示
+      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
     }
 
     if (result.type === 'jsapi') {
@@ -2948,12 +2976,8 @@ router.all('/:func/:trade_no', async (req, res) => {
     }
 
     if (result.type === 'scheme') {
-      // 小程序跳转 - 使用 qrcode 模板显示
-      return res.render('qrcode', {
-        qrcodeUrl: result.url,
-        order,
-        trade_no
-      });
+      // 重定向到收银台页面
+      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
     }
 
     // 默认跳转
