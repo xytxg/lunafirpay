@@ -32,7 +32,7 @@ function generateVerificationCode() {
  * 检查 Turnstile 是否启用
  */
 function isTurnstileEnabled() {
-  return config.turnstile?.enabled && config.turnstile?.siteKey && config.turnstile?.secretKey;
+  return !!(config.turnstile?.enabled && config.turnstile?.siteKey && config.turnstile?.secretKey);
 }
 
 /**

@@ -48,7 +48,7 @@ class EmailService {
    */
   isEnabled() {
     const cfg = this.emailConfig;
-    return cfg && cfg.enabled && cfg.host && cfg.port && cfg.user && cfg.pass;
+    return !!(cfg && cfg.enabled && cfg.host && cfg.port && cfg.user && cfg.pass);
   }
 
   /**

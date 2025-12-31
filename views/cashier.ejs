@@ -1094,7 +1094,8 @@
         qrcodeCountdown.style.display = 'none';
         qrcodeBackBtn.style.display = 'none';
         setTimeout(function() {
-          if (returnUrl) {
+          // 检查 returnUrl 是否有效（非空字符串）
+          if (returnUrl && returnUrl.trim() !== '') {
             window.location.href = returnUrl;
           } else {
             window.location.href = '/api/pay/success?trade_no=' + tradeNo;
