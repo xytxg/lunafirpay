@@ -115,6 +115,7 @@ const {
 const axios = require('axios');
 const pluginLoader = require('../plugins');
 const telegramService = require('../Telegram');
+const { getClientIp } = require('../utils/ipUtils');
 
 // 加载所有支付插件
 pluginLoader.loadAll();
@@ -123,10 +124,7 @@ pluginLoader.loadAll();
 
 // 获取客户端IP
 function getClientIP(req) {
-  return req.headers['x-forwarded-for']?.split(',')[0] || 
-         req.headers['x-real-ip'] || 
-         req.connection?.remoteAddress || 
-         req.ip;
+  return getClientIp(req) || req.ip;
 }
 
 // 通过 PID（12位随机ID）获取商户信息（单服务商模式）
@@ -1869,7 +1867,7 @@ router.get('/render/:trade_no/:page', async (req, res) => {
       name: order.name || '订单支付',
       notify_url: `${req.protocol}://${req.get('host')}/api/pay/notify/${trade_no}`,
       return_url: `${req.protocol}://${req.get('host')}/api/pay/return/${trade_no}`,
-      clientip: req.ip || req.connection.remoteAddress
+      clientip: getClientIP(req)
     };
 
     // 根据页面类型渲染
@@ -2896,7 +2894,7 @@ router.all('/:func/:trade_no', async (req, res) => {
       name: order.name,
       notify_url: `${baseUrl}pay/notify/${order.trade_no}/`,
       return_url: order.return_url || '',
-      clientip: req.ip || req.headers['x-real-ip'] || '127.0.0.1',
+      clientip: getClientIP(req),
       openid: openid,
       method: func
     };

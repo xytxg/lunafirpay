@@ -6,6 +6,7 @@ const router = express.Router();
 const db = require('../../config/database');
 const crypto = require('crypto');
 const telegramService = require('../../Telegram');
+const telegramBindStore = require('../../utils/telegramBindStore');
 
 const { requireMerchantMainAccount, requireMerchantRamPermission } = require('../auth');
 
@@ -163,20 +164,9 @@ router.post('/telegram/bindToken', requireMerchantRamPermission('settings'), asy
       return res.json({ code: -1, msg: '已绑定 Telegram，请先解绑' });
     }
 
-    // 删除旧的未使用的绑定码
-    await db.query(
-      'DELETE FROM telegram_bind_tokens WHERE user_type = ? AND user_id = ?',
-      [userType, String(userId)]
-    );
-
-    // 生成新的绑定码
-    const token = crypto.randomBytes(16).toString('hex');
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5分钟过期
-
-    await db.query(
-      `INSERT INTO telegram_bind_tokens (token, user_type, user_id, expires_at) VALUES (?, ?, ?, ?)`,
-      [token, userType, String(userId), expiresAt]
-    );
+    // 使用内存存储生成新的绑定码（5分钟过期）
+    const token = telegramBindStore.generateToken(userId, userType);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     const botName = telegramService.config.botName || 'your_bot';
     const bindUrl = `https://t.me/${botName}?start=${token}`;

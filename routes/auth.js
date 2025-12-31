@@ -2,11 +2,13 @@
 const router = express.Router();
 const db = require('../config/database');
 const { generateRandomString } = require('../utils/helpers');
+const { getClientIp } = require('../utils/ipUtils');
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const telegramService = require('../Telegram');
 const emailService = require('../utils/emailService');
+const verificationStore = require('../utils/verificationStore');
 const systemConfig = require('../utils/systemConfig');
 
 // 加载配置（必须存在 config.yaml）
@@ -135,7 +137,7 @@ router.post('/register', async (req, res) => {
         return res.json({ code: -1, msg: '请完成人机验证' });
       }
       
-      const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+      const clientIp = getClientIp(req);
       const turnstileValid = await verifyTurnstile(turnstileToken, clientIp);
       if (!turnstileValid) {
         return res.json({ code: -1, msg: '人机验证失败，请重试' });
@@ -148,11 +150,8 @@ router.post('/register', async (req, res) => {
         return res.json({ code: -1, msg: '请输入邮箱验证码' });
       }
 
-      const [validCodes] = await db.query(
-        'SELECT id FROM verification_codes WHERE email = ? AND code = ? AND type = ? AND expires_at > NOW() AND used = 0',
-        [email, verificationCode, 'register']
-      );
-      if (validCodes.length === 0) {
+      // 使用内存存储验证验证码
+      if (!verificationStore.verify(email, verificationCode, 'register')) {
         return res.json({ code: -1, msg: '验证码无效或已过期' });
       }
     }
@@ -237,13 +236,8 @@ router.post('/register', async (req, res) => {
       [userId, userType, sessionId]
     );
 
-    // 标记验证码为已使用（仅在邮件功能启用时）
-    if (email && emailService.isEnabled() && verificationCode) {
-      await db.query(
-        'UPDATE verification_codes SET used = 1 WHERE email = ? AND code = ? AND type = ?',
-        [email, verificationCode, 'register']
-      );
-    }
+    // 标记验证码为已使用（verificationStore.verify 已自动处理）
+    // 无需额外操作
 
     // 设置cookie
     res.cookie('sessionId', sessionId, {
@@ -316,7 +310,7 @@ router.post('/login', async (req, res) => {
       }
 
       // 更新最后登录时间和IP
-      const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+      const clientIp = getClientIp(req);
       await db.query(
         'UPDATE user_ram SET last_login_at = NOW(), last_login_ip = ? WHERE id = ?',
         [clientIp, ramUser.id]
@@ -668,19 +662,15 @@ router.post('/reset-password', async (req, res) => {
         return res.json({ code: -1, msg: '请完成人机验证' });
       }
       
-      const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+      const clientIp = getClientIp(req);
       const turnstileValid = await verifyTurnstile(turnstileToken, clientIp);
       if (!turnstileValid) {
         return res.json({ code: -1, msg: '人机验证失败，请重试' });
       }
     }
 
-    // 验证验证码
-    const [validCodes] = await db.query(
-      'SELECT id FROM verification_codes WHERE email = ? AND code = ? AND type = ? AND expires_at > NOW() AND used = 0',
-      [email, verificationCode, 'reset']
-    );
-    if (validCodes.length === 0) {
+    // 使用内存存储验证验证码
+    if (!verificationStore.verify(email, verificationCode, 'reset')) {
       return res.json({ code: -1, msg: '验证码无效或已过期' });
     }
 
@@ -696,9 +686,7 @@ router.post('/reset-password', async (req, res) => {
     // 更新密码
     await db.query('UPDATE users SET password = ? WHERE email = ?', [newPassword, email]);
 
-    // 标记验证码为已使用 
-    await db.query('UPDATE verification_codes SET used = 1 WHERE email = ? AND code = ? AND type = ?', 
-      [email, verificationCode, 'reset']);
+    // 验证码已在 verify() 中自动标记为已使用
 
     // 删除该用户的所有会话（强制重新登录）
     await db.query('DELETE FROM sessions WHERE user_id = ?', [userId]);

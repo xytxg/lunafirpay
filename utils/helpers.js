@@ -100,15 +100,6 @@ function createSign(params, key) {
   return md5Sign(sortedParams + key);
 }
 
-// 获取客户端IP
-function getClientIp(req) {
-  return req.headers['x-forwarded-for'] ||
-    req.headers['x-real-ip'] ||
-    req.connection.remoteAddress ||
-    req.socket.remoteAddress ||
-    '';
-}
-
 /**
  * 生成 RSA 密钥对
  * @returns {{publicKey: string, privateKey: string}} Base64 格式的密钥对（与 PHP 兼容）
@@ -176,7 +167,6 @@ module.exports = {
   md5Sign,
   verifySign,
   createSign,
-  getClientIp,
   generateRsaKeyPair,
   pemToBase64,
   base64ToPem,

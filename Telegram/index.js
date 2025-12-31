@@ -37,6 +37,9 @@ const telegramConfig = mainConfig.telegram || {};
 // 引入系统配置服务
 const systemConfig = require('../utils/systemConfig');
 
+// 引入 Telegram 绑定令牌内存存储
+const telegramBindStore = require('../utils/telegramBindStore');
+
 // 配置对象
 const config = {
   // 机器人 Token（优先使用环境变量）
@@ -248,18 +251,15 @@ async function handleHelp(chatId) {
  */
 async function handleBind(chatId, token, fromUser) {
   try {
-    const [tokenInfo] = await db.query(
-      `SELECT * FROM telegram_bind_tokens 
-       WHERE token = ? AND expires_at > NOW()`,
-      [token]
-    );
+    // 使用内存存储验证并消费令牌
+    const tokenInfo = telegramBindStore.verifyAndConsume(token);
     
-    if (tokenInfo.length === 0) {
+    if (!tokenInfo) {
       await bot.sendMessage(chatId, '❌ 绑定链接无效或已过期，请重新获取');
       return;
     }
     
-    const { user_id, user_type } = tokenInfo[0];
+    const { userId: user_id, userType: user_type } = tokenInfo;
     const telegramId = fromUser.id.toString();
     const username = fromUser.username || '';
     const nickname = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || '';
@@ -279,8 +279,7 @@ async function handleBind(chatId, token, fromUser) {
       [user_id, user_type, telegramId, username, nickname, chatId]
     );
     
-    // 删除已使用的 token
-    await db.query('DELETE FROM telegram_bind_tokens WHERE id = ?', [tokenInfo[0].id]);
+    // 令牌已在 verifyAndConsume 中自动删除
     
     const typeNames = {
       merchant: '商户',
@@ -1060,12 +1059,8 @@ async function notifyUserWithPid(userId, userType, notifyType, message, pid) {
 // ==================== 绑定管理 ====================
 
 async function generateBindToken(userId, userType) {
-  const token = crypto.randomBytes(16).toString('hex');
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  
-  await db.query('DELETE FROM telegram_bind_tokens WHERE user_id = ? AND user_type = ?', [String(userId), userType]);
-  await db.query('INSERT INTO telegram_bind_tokens (user_id, user_type, token, expires_at) VALUES (?, ?, ?, ?)', [String(userId), userType, token, expiresAt]);
-  
+  // 使用内存存储生成令牌（5分钟过期）
+  const token = telegramBindStore.generateToken(userId, userType);
   return token;
 }
 
@@ -1197,12 +1192,9 @@ router.post('/bindToken', authMiddleware, async (req, res) => {
   try {
     const { user_id, user_type } = req.user;
     
-    await db.query('DELETE FROM telegram_bind_tokens WHERE user_type = ? AND user_id = ?', [user_type, String(user_id)]);
-    
-    const token = crypto.randomBytes(16).toString('hex');
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10分钟有效期
-    
-    await db.query('INSERT INTO telegram_bind_tokens (token, user_type, user_id, expires_at) VALUES (?, ?, ?, ?)', [token, user_type, String(user_id), expiresAt]);
+    // 使用内存存储生成令牌（5分钟过期）
+    const token = telegramBindStore.generateToken(user_id, user_type);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
     
     const bindUrl = `https://t.me/${config.botName}?start=${token}`;
     const bindCommand = `/bind ${token}`;
@@ -1215,7 +1207,7 @@ router.post('/bindToken', authMiddleware, async (req, res) => {
         bindCommand,     // 手动输入命令绑定
         botName: config.botName,
         expiresAt: expiresAt.toISOString(),
-        expiresIn: 600   // 有效期（秒）
+        expiresIn: 300   // 有效期（秒）
       } 
     });
   } catch (err) {
