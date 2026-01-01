@@ -380,126 +380,6 @@
       color: #10b981;
     }
 
-    /* 加密货币支付样式 */
-    .crypto-wrapper {
-      background: #ffffff;
-      border-radius: 10px;
-      border: 1px solid #eaedf3;
-      padding: 20px;
-      text-align: center;
-    }
-
-    .crypto-header {
-      margin-bottom: 16px;
-    }
-
-    .crypto-currency {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-
-    .crypto-currency > span:first-child {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-
-    .crypto-badge {
-      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-      color: #fff;
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 500;
-    }
-
-    .crypto-amount {
-      font-size: 28px;
-      font-weight: 700;
-      color: var(--text-primary);
-      letter-spacing: -0.02em;
-    }
-
-    .crypto-amount-cny {
-      font-size: 13px;
-      color: var(--text-secondary);
-      margin-top: 4px;
-    }
-
-    .crypto-address-section {
-      margin-top: 16px;
-      text-align: left;
-    }
-
-    .crypto-address-label {
-      font-size: 12px;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .crypto-address-box {
-      background: #f9fafb;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 12px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .crypto-address {
-      flex: 1;
-      font-family: 'SF Mono', Monaco, Consolas, monospace;
-      font-size: 12px;
-      color: #374151;
-      word-break: break-all;
-      line-height: 1.5;
-    }
-
-    .crypto-copy-btn {
-      background: var(--primary-color);
-      color: #fff;
-      border: none;
-      padding: 6px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 12px;
-      white-space: nowrap;
-      transition: background 0.15s;
-    }
-
-    .crypto-copy-btn:hover {
-      background: var(--primary-hover);
-    }
-
-    .crypto-copy-btn.copied {
-      background: #10b981;
-    }
-
-    .crypto-tips {
-      margin-top: 16px;
-      padding: 14px;
-      background: #fef3c7;
-      border-radius: 8px;
-      text-align: left;
-    }
-
-    .crypto-tips-title {
-      font-size: 13px;
-      font-weight: 600;
-      color: #92400e;
-      margin-bottom: 8px;
-    }
-
-    .crypto-tips ul {
-      font-size: 12px;
-    }
-
     /* 支付宝H5唤起APP样式 */
     .alipay-h5-wrapper {
       background: linear-gradient(135deg, #1677ff 0%, #0958d9 100%);
@@ -718,43 +598,16 @@
           <% payTypes.forEach(function(pt, index) { %>
             <div class="payment-method <%= pt.type_code === order.pay_type ? 'active' : '' %>" 
                  data-type="<%= pt.type_code %>" 
-                 data-group="<%= pt.group_id || '' %>"
-                 data-crypto="<%= pt.is_crypto ? '1' : '0' %>">
+                 data-group="<%= pt.group_id || '' %>">
               <div class="method-radio"></div>
-              <% if (pt.is_crypto) { %>
-                <%
-                  // 固定图标映射
-                  var iconMap = {
-                    'tron-USDT': '/assets/crypto/tron-usdt.jpg',
-                    'tron-USDC': '/assets/crypto/tron-usdc.jpg',
-                    'tron-TRX': '/assets/crypto/tron-trx.jpg',
-                    'ethereum-USDT': '/assets/crypto/ethereum-usdt.jpg',
-                    'ethereum-USDC': '/assets/crypto/ethereum-usdc.jpg',
-                    'polygon-USDT': '/assets/crypto/pol-usdt.jpg',
-                    'polygon-USDC': '/assets/crypto/pol-usdc.jpg',
-                    'arbitrum-USDT': '/assets/crypto/arbitrum-usdt.jpg',
-                    'arbitrum-USDC': '/assets/crypto/arbitrum-usdc.jpg'
-                  };
-                  var iconKey = (pt.network || 'tron') + '-' + (pt.currency || 'USDT');
-                  var iconSrc = iconMap[iconKey] || '/assets/crypto/tron-usdt.jpg';
-                %>
-                <img class="method-icon" 
-                     src="<%= iconSrc %>" 
-                     alt="<%= pt.type_name %>"
-                     onerror="this.src='/assets/crypto/tron-usdt.jpg'"
-                     style="border-radius: 50%;">
-              <% } else { %>
-                <img class="method-icon" 
-                     src="/assets/icon/<%= pt.type_code %>.ico" 
-                     alt="<%= pt.type_name %>"
-                     onerror="this.src='/assets/img/<%= pt.type_code %>.png'">
-              <% } %>
+              <img class="method-icon" 
+                   src="/assets/icon/<%= pt.type_code %>.ico" 
+                   alt="<%= pt.type_name %>"
+                   onerror="this.src='/assets/img/<%= pt.type_code %>.png'">
               <div class="method-info">
                 <div class="method-name"><%= pt.type_name %></div>
                 <div class="method-desc">
-                  <% if (pt.is_crypto) { %>
-                    加密货币支付 · <%= pt.network || '' %>
-                  <% } else if (pt.type_code === 'alipay') { %>
+                  <% if (pt.type_code === 'alipay') { %>
                     支持支付宝 APP 和扫码支付
                   <% } else if (pt.type_code === 'wxpay') { %>
                     支持微信 APP 和扫码支付
@@ -812,38 +665,6 @@
             <a href="javascript:checkAlipayH5Result()" class="alipay-h5-btn alipay-h5-btn-secondary">检测支付状态</a>
           </div>
           
-          <!-- 加密货币支付信息 -->
-          <div class="crypto-wrapper" id="cryptoWrapper" style="display:none;">
-            <div class="crypto-header">
-              <div class="crypto-currency">
-                <span id="cryptoCurrency">USDT</span>
-                <span class="crypto-badge" id="cryptoNetwork">TRC20</span>
-              </div>
-              <div class="crypto-amount">
-                <span id="cryptoAmount">0.00</span> <span id="cryptoCurrencyUnit">USDT</span>
-              </div>
-              <div class="crypto-amount-cny">≈ ¥<span id="cryptoAmountCny">0.00</span></div>
-            </div>
-            <div class="qrcode-box">
-              <img id="cryptoQrcodeImg" src="" alt="钱包地址二维码">
-            </div>
-            <div class="crypto-address-section">
-              <div class="crypto-address-label">收款地址</div>
-              <div class="crypto-address-box">
-                <span class="crypto-address" id="cryptoAddress"></span>
-                <button class="crypto-copy-btn" onclick="copyCryptoAddress()">复制</button>
-              </div>
-            </div>
-            <div class="crypto-tips">
-              <div class="crypto-tips-title">⚠️ 重要提示</div>
-              <ul>
-                <li>请务必转账准确金额，金额必须完全一致</li>
-                <li>仅支持指定网络转账，其他网络转账将无法到账</li>
-                <li>转账完成后请等待区块链确认</li>
-              </ul>
-            </div>
-          </div>
-          
           <div class="qrcode-status waiting" id="qrcodeStatus">
             <span class="status-spinner"></span>
             <span>等待支付中...</span>
@@ -862,9 +683,6 @@
       var selectedType = '<%= order.pay_type || "" %>';
       var selectedGroupId = '<%= selectedGroupId %>';
       var tradeNo = '<%= order.trade_no %>';
-      
-      // 已存在的加密货币订单（用于页面刷新后恢复状态）
-      var existingCryptoOrder = <%- typeof existingCryptoOrder !== 'undefined' && existingCryptoOrder ? JSON.stringify(existingCryptoOrder) : 'null' %>;
       
       // 已锁定的支付信息（订单已选择通道，不可更改）
       var lockedPayment = <%- typeof lockedPayment !== 'undefined' && lockedPayment ? JSON.stringify(lockedPayment) : 'null' %>;
@@ -902,7 +720,6 @@
       var qrcodePanel = document.getElementById('qrcodePanel');
       var qrcodeImg = document.getElementById('qrcodeImg');
       var normalQrcodeWrapper = document.getElementById('normalQrcodeWrapper');
-      var cryptoWrapper = document.getElementById('cryptoWrapper');
       var qrcodeStatus = document.getElementById('qrcodeStatus');
       var qrcodeCountdown = document.getElementById('qrcodeCountdown');
       var expireTimeEl = document.getElementById('expireTime');
@@ -913,14 +730,12 @@
       var countdownInterval = null;
       var expireTimestamp = null;  // 过期时间戳
       var returnUrl = '<%= order.return_url || "" %>';
-      var currentCryptoTradeNo = null;  // 当前加密货币订单号
       var alipayH5Wrapper = document.getElementById('alipayH5Wrapper');
       var alipayH5SchemeUrl = null;  // 支付宝H5协议URL
 
       // 显示支付宝H5唤起APP面板
       function showAlipayH5(schemeUrl, money) {
         normalQrcodeWrapper.style.display = 'none';
-        cryptoWrapper.style.display = 'none';
         alipayH5Wrapper.style.display = 'block';
         
         alipayH5SchemeUrl = schemeUrl;
@@ -966,7 +781,6 @@
       // 显示普通支付二维码
       function showQrcode(qrcodeUrl, payTypeName, expireTime, isLocked) {
         normalQrcodeWrapper.style.display = 'block';
-        cryptoWrapper.style.display = 'none';
         qrcodeImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(qrcodeUrl);
         var tipTextEl = document.getElementById('qrcodeTipText');
         if (tipTextEl && payTypeName) {
@@ -987,51 +801,14 @@
         qrcodeCountdown.style.display = 'block';
         qrcodePanel.style.display = 'block';
         // 如果已锁定，隐藏返回按钮
-        if (isLocked || lockedPayment) {
-          qrcodeBackBtn.style.display = 'none';
-        } else {
-          qrcodeBackBtn.style.display = 'block';
+        if (qrcodeBackBtn) {
+            if (isLocked || lockedPayment) {
+                qrcodeBackBtn.style.display = 'none';
+            } else {
+                qrcodeBackBtn.style.display = 'block';
+            }
         }
         startPolling();
-        startCountdown();
-      }
-
-      // 显示加密货币支付二维码
-      function showCryptoQrcode(cryptoData, isLocked) {
-        normalQrcodeWrapper.style.display = 'none';
-        cryptoWrapper.style.display = 'block';
-        currentCryptoTradeNo = cryptoData.trade_no;
-        
-        // 填充加密货币信息
-        document.getElementById('cryptoCurrency').textContent = cryptoData.currency;
-        document.getElementById('cryptoNetwork').textContent = cryptoData.token_type + ' · ' + cryptoData.network_name;
-        document.getElementById('cryptoAmount').textContent = cryptoData.amount;
-        document.getElementById('cryptoCurrencyUnit').textContent = cryptoData.currency;
-        document.getElementById('cryptoAmountCny').textContent = cryptoData.amount_cny;
-        document.getElementById('cryptoAddress').textContent = cryptoData.wallet_address;
-        document.getElementById('cryptoQrcodeImg').src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(cryptoData.wallet_address);
-        
-        payMethodSection.style.display = 'none';
-        payBtn.style.display = 'none';
-        secureNotice.style.display = 'none';
-        // 设置过期时间（+8时区）
-        if (cryptoData.expire_time) {
-          expireTimestamp = new Date(cryptoData.expire_time).getTime();
-        } else {
-          expireTimestamp = Date.now() + 300 * 1000;  // 默认5分钟
-        }
-        updateExpireTimeDisplay();
-        qrcodeStatus.className = 'qrcode-status waiting';
-        qrcodeStatus.innerHTML = '<span class="status-spinner"></span><span>等待转账中，请转账准确金额...</span>';
-        qrcodeCountdown.style.display = 'block';
-        qrcodePanel.style.display = 'block';
-        // 如果已锁定，隐藏返回按钮
-        if (isLocked || lockedPayment) {
-          qrcodeBackBtn.style.display = 'none';
-        } else {
-          qrcodeBackBtn.style.display = 'block';
-        }
-        startCryptoPolling();
         startCountdown();
       }
 
@@ -1041,8 +818,6 @@
         clearInterval(countdownInterval);
         qrcodePanel.style.display = 'none';
         normalQrcodeWrapper.style.display = 'block';
-        cryptoWrapper.style.display = 'none';
-        currentCryptoTradeNo = null;
         payMethodSection.style.display = 'block';
         payBtn.style.display = 'flex';
         payBtn.disabled = false;
@@ -1067,24 +842,6 @@
         }, 2000);
       }
 
-      // 轮询检查加密货币订单支付状态
-      function startCryptoPolling() {
-        clearInterval(checkInterval);
-        if (!currentCryptoTradeNo) return;
-        checkInterval = setInterval(function() {
-          fetch('/api/crypto/check/' + currentCryptoTradeNo)
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-              if (data.code === 0 && data.paid) {
-                onPaymentSuccess();
-              }
-            })
-            .catch(function(err) {
-              console.error('检查状态失败:', err);
-            });
-        }, 3000);
-      }
-
       // 支付成功处理
       function onPaymentSuccess() {
         clearInterval(checkInterval);
@@ -1092,7 +849,9 @@
         qrcodeStatus.className = 'qrcode-status success';
         qrcodeStatus.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg><span>支付成功！正在跳转...</span>';
         qrcodeCountdown.style.display = 'none';
-        qrcodeBackBtn.style.display = 'none';
+        if (qrcodeBackBtn) {
+            qrcodeBackBtn.style.display = 'none';
+        }
         setTimeout(function() {
           // 检查 returnUrl 是否有效（非空字符串）
           if (returnUrl && returnUrl.trim() !== '') {
@@ -1166,6 +925,17 @@
                 group_id: selectedGroupId 
               })
             });
+
+            // 检查 HTTP 状态码
+            if (!res.ok) {
+                var errorText = await res.text(); // 获取非 JSON 的错误信息
+                console.error('Server Error:', res.status, errorText);
+                alert('服务器错误 (' + res.status + ')，请联系管理员');
+                this.disabled = false;
+                this.innerHTML = '<span>支付</span>';
+                return;
+            }
+
             var data = await res.json();
             
             if (data.code === 0) {
@@ -1174,9 +944,6 @@
                 document.open();
                 document.write(data.html);
                 document.close();
-              } else if (data.type === 'crypto' && data.crypto) {
-                // 加密货币支付 - 在当前页面显示二维码
-                showCryptoQrcode(data.crypto);
               } else if (data.scheme) {
                 // APP跳转协议（如支付宝/微信APP唤起）
                 window.location.href = data.scheme;
@@ -1198,48 +965,15 @@
               this.innerHTML = '<span>支付</span>';
             }
           } catch (e) {
-            alert('网络错误，请检查网络后重试');
+            console.error('Payment Error:', e);
+            alert('网络错误或数据解析失败，请稍后重试');
             this.disabled = false;
             this.innerHTML = '<span>支付</span>';
           }
         });
       }
 
-      // 复制加密货币地址
-      window.copyCryptoAddress = function() {
-        var address = document.getElementById('cryptoAddress').textContent;
-        navigator.clipboard.writeText(address).then(function() {
-          var btn = document.querySelector('.crypto-copy-btn');
-          btn.textContent = '已复制';
-          btn.classList.add('copied');
-          setTimeout(function() {
-            btn.textContent = '复制';
-            btn.classList.remove('copied');
-          }, 2000);
-        }).catch(function() {
-          // fallback
-          var textarea = document.createElement('textarea');
-          textarea.value = address;
-          document.body.appendChild(textarea);
-          textarea.select();
-          document.execCommand('copy');
-          document.body.removeChild(textarea);
-          var btn = document.querySelector('.crypto-copy-btn');
-          btn.textContent = '已复制';
-          btn.classList.add('copied');
-          setTimeout(function() {
-            btn.textContent = '复制';
-            btn.classList.remove('copied');
-          }, 2000);
-        });
-      };
-
-      // 页面加载时检查是否有已存在的加密货币订单，自动恢复显示二维码
-      if (existingCryptoOrder) {
-        showCryptoQrcode(existingCryptoOrder, true);
-      }
-      // 如果订单已锁定通道，自动触发支付
-      else if (lockedPayment) {
+      if (lockedPayment) {
         // 禁用支付方式选择
         document.querySelectorAll('.payment-method').forEach(function(item) {
           if (item.dataset.type !== lockedPayment.pay_type) {
