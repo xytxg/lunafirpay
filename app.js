@@ -41,6 +41,7 @@ const telegramService = require('./Telegram');
 const emailService = require('./utils/emailService');
 
 const app = express();
+const distPath = path.join(__dirname, 'dist');
 
 // 安全响应头
 app.use((req, res, next) => {
@@ -75,7 +76,8 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 // 静态文件服务（支付图标等）
-app.use('/assets', express.static(path.join(__dirname, 'dist/assets')));
+app.use('/assets', express.static(path.join(distPath, 'assets')));
+app.use(express.static(distPath));
 
 // API路由
 app.use('/api/auth', authRoutes);
@@ -145,6 +147,10 @@ app.get('/api/system/config', async (req, res) => {
 app.get('/api/plugins', (req, res) => {
   const plugins = pluginLoader.getPluginList();
   res.json({ code: 0, data: plugins });
+});
+
+app.get(/^(?!\/api\/|\/pay\/|\/submit\.php$|\/mapi\.php$|\/api\.php$).*/, (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
 });
 
 // 错误处理

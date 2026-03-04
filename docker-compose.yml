@@ -1,0 +1,46 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: lunafirpay-db
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root_change_me
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_DATABASE: lunafirpay
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./initialization.sql:/docker-entrypoint-initdb.d/01-initialization.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lunafirpay:latest
+    container_name: lunafirpay-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      TZ: Asia/Shanghai
+      DB_ROOT_PASSWORD: root_change_me
+
+volumes:
+  db_data:

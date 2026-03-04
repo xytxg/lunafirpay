@@ -37,6 +37,60 @@
 
 ## 🚀 快速开始
 
+### 使用 Docker Compose 一键部署
+
+本项目已内置 Docker 部署文件，支持一条命令启动应用和数据库。
+
+```bash
+docker compose up -d --build
+```
+
+默认会启动：
+
+- `lunafirpay-app`（端口 `3000`）
+- `lunafirpay-db`（端口 `3306`）
+
+#### 配置方式（单一配置源）
+
+Docker 部署只使用根目录 `config.yaml`，不需要维护第二份 Docker 专用配置。
+
+你只需要修改 `config.yaml` 里的数据库配置：
+
+```yaml
+database:
+  host: "db"
+  port: 3306
+  user: "你的数据库用户"
+  password: "你的数据库密码"
+  database: "lunafirpay"
+```
+
+> `host` 在 compose 场景必须是 `db`（MySQL 服务名）。
+
+#### 自动数据库用户同步
+
+应用容器启动时会先执行数据库用户同步脚本：
+
+- 按 `config.yaml` 读取 `database.user/password/database`
+- 使用 MySQL root 权限自动创建/更新对应用户
+- 自动授予该库权限后再启动 Node.js 服务
+
+因此你只改 `config.yaml` 一处即可，避免账号不一致导致 `Access denied`。
+
+#### 首次部署/重置数据库
+
+首次启动时会自动执行 `initialization.sql` 初始化数据库。
+
+如果你改了数据库账号、密码或库结构，建议重建数据卷让初始化重新执行：
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+> `down -v` 会删除数据库数据，请先备份。
+
+### 手动部署
 
 ```bash
 # 克隆仓库
@@ -48,14 +102,31 @@ npm install
 
 # 导入数据库
 mysql -u root -p your_database < initialization.sql
-我更建议你在宝塔中导入数据库，如果更新程序的话请备份旧数据库，重新运行就是更新数据库字段
 
 # 配置数据库
 cp config.yaml.example config.yaml
 # 编辑 config.yaml 填写数据库连接信息
 
+# 修改根目录 nginx.conf 配置文件
+nano nginx.conf
+
 # 启动服务
 node app.js
+```
+
+### 一键部署脚本
+
+使用 `deploy.sh` 可以在 Linux 服务器上快速完成部署（自动安装 Node.js、配置数据库、systemd 守护进程）：
+
+```bash
+# 导入数据库信息
+mysql -u root -p your_database < initialization.sql
+
+# 运行一键部署脚本（root 运行）
+bash deploy.sh
+
+# 修改根目录 nginx.conf 配置文件
+nano nginx.conf
 ```
 
 > **💡 提示：** 搭建完成后，第一个注册的用户将自动成为管理员。
@@ -74,60 +145,6 @@ server/
 ├── Telegram/           # Telegram Bot 模块
 ├── utils/              # 工具函数
 ```
-
-## 🌐 Nginx 伪静态配置
-
-Node.js 默认运行在 `3000` 端口，Nginx 作为反向代理，静态文件由 Nginx 直接服务。
-
-```nginx
-
-    # 静态资源缓存（带 hash 的文件可以长期缓存）
-    location /assets/ {
-        add_header Cache-Control "public, immutable";
-        try_files $uri =404;
-    }
-    
-    # API 代理到 Node.js 后端
-    location /api/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-    # /pay/ 路由代理到 Node.js 后端（支付相关）
-        location /pay/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    
-    # 兼容易支付 PHP 路由 - 代理到 Node.js 后端
-    location ~ ^/(submit|mapi|api)\.php$ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    
-    # SPA 路由 - 所有前端路由都返回 index.html
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-    
-```
-> **💡 提示：** Nginx配置仅作示例，不能直接使用
-
-
 
 ### 路由说明
 
