@@ -90,6 +90,19 @@ docker compose up -d --build
 
 > `down -v` 会删除数据库数据，请先备份。
 
+### 使用官方自动构建的 Docker 镜像
+
+本项目每次推送到 main 分支或发布新标签时，都会自动构建并推送 Docker 镜像到 GitHub Container Registry（GHCR）
+
+你可以直接拉取官方镜像，无需本地构建：
+
+```bash
+docker pull ghcr.io/skynami/lunafirpay:latest
+```
+
+- 也可以拉取指定 tag，例如 `ghcr.io/skynami/lunafirpay:v1.0.0`
+- 镜像自动构建流程见 `.github/workflows/docker-publish.yml`
+
 ### 手动部署
 
 ```bash
