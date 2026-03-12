@@ -179,6 +179,9 @@ async function mapiPay(channelConfig, orderInfo, payType) {
  * 支付宝支付
  */
 async function alipay(channelConfig, orderInfo) {
+  if (channelConfig.appswitch !== '1') {
+    return submit(channelConfig, orderInfo);
+  }
   try {
     const result = await mapiPay(channelConfig, orderInfo, 'alipay');
     return result;
@@ -191,6 +194,9 @@ async function alipay(channelConfig, orderInfo) {
  * 微信支付
  */
 async function wxpay(channelConfig, orderInfo) {
+  if (channelConfig.appswitch !== '1') {
+    return submit(channelConfig, orderInfo);
+  }
   try {
     const result = await mapiPay(channelConfig, orderInfo, 'wxpay');
     return result;
@@ -203,6 +209,9 @@ async function wxpay(channelConfig, orderInfo) {
  * QQ支付
  */
 async function qqpay(channelConfig, orderInfo) {
+  if (channelConfig.appswitch !== '1') {
+    return submit(channelConfig, orderInfo);
+  }
   try {
     const result = await mapiPay(channelConfig, orderInfo, 'qqpay');
     return result;
@@ -215,6 +224,9 @@ async function qqpay(channelConfig, orderInfo) {
  * 云闪付支付
  */
 async function bank(channelConfig, orderInfo) {
+  if (channelConfig.appswitch !== '1') {
+    return submit(channelConfig, orderInfo);
+  }
   try {
     const result = await mapiPay(channelConfig, orderInfo, 'bank');
     return result;
@@ -227,6 +239,9 @@ async function bank(channelConfig, orderInfo) {
  * 京东支付
  */
 async function jdpay(channelConfig, orderInfo) {
+  if (channelConfig.appswitch !== '1') {
+    return submit(channelConfig, orderInfo);
+  }
   try {
     const result = await mapiPay(channelConfig, orderInfo, 'jdpay');
     return result;
