@@ -5,6 +5,8 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 
 const pluginLoader = require('./utils/pluginLoader');
+const systemConfig = require('./utils/systemConfig');
+const { ensureSitePublicConfigFile, syncSitePublicConfigFromSystem } = require('./utils/sitePublicConfig');
 
 // 路由
 const authRoutes = require('./routes/auth');
@@ -133,12 +135,13 @@ app.get('/api/health', (req, res) => {
 
 // 获取系统配置（公开接口）
 app.get('/api/system/config', async (req, res) => {
-  const systemConfig = require('./utils/systemConfig');
   const apiEndpoint = await systemConfig.getApiEndpoint();
+  const siteName = await systemConfig.getSiteName();
   res.json({ 
     code: 0, 
     data: {
-      defaultApiEndpoint: apiEndpoint
+      defaultApiEndpoint: apiEndpoint,
+      siteName
     }
   });
 });
@@ -178,6 +181,19 @@ emailService.start().then(() => {
 
 // 启动服务器
 const PORT = 3000;
+
+// 启动时先确保前台站点配置文件可用，再同步数据库配置
+ensureSitePublicConfigFile().then((result) => {
+  if (result.created || result.repaired) {
+    console.log('前台站点配置文件已自动创建/修复');
+  }
+  return syncSitePublicConfigFromSystem(systemConfig);
+}).then(() => {
+  console.log('前台站点配置文件已同步');
+}).catch((err) => {
+  console.error('同步前台站点配置文件失败:', err);
+});
+
 app.listen(PORT, () => {
   console.log(`服务器已启动: http://localhost:${PORT}`);
 });

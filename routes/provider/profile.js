@@ -7,6 +7,8 @@ const db = require('../../config/database');
 const crypto = require('crypto');
 const telegramService = require('../../Telegram');
 const telegramBindStore = require('../../utils/telegramBindStore');
+const systemConfig = require('../../utils/systemConfig');
+const { syncSitePublicConfigFromSystem } = require('../../utils/sitePublicConfig');
 const { requireProviderRamPermission } = require('../auth');
 
 // 获取服务商资料（所有用户可访问，RAM 用户返回部分信息）
@@ -101,23 +103,25 @@ router.get('/profile', async (req, res) => {
 router.post('/profile/update', requireProviderRamPermission('settings'), async (req, res) => {
   try {
     const { api_endpoint, site_name } = req.body;
+    let shouldSyncSiteConfig = false;
 
     // 更新系统配置
     if (api_endpoint !== undefined) {
-      await db.query(
-        'INSERT INTO system_config (config_key, config_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE config_value = ?',
-        ['api_endpoint', api_endpoint, api_endpoint]
-      );
+      await systemConfig.setConfig('api_endpoint', String(api_endpoint || ''), 'API端点地址');
+      shouldSyncSiteConfig = true;
     }
 
     if (site_name !== undefined) {
-      await db.query(
-        'INSERT INTO system_config (config_key, config_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE config_value = ?',
-        ['site_name', site_name, site_name]
-      );
-      // 清除系统配置缓存
-      const systemConfig = require('../../utils/systemConfig');
-      systemConfig.clearCache();
+      await systemConfig.setConfig('site_name', String(site_name || ''), '站点名称');
+      shouldSyncSiteConfig = true;
+    }
+
+    if (shouldSyncSiteConfig) {
+      try {
+        await syncSitePublicConfigFromSystem(systemConfig);
+      } catch (syncError) {
+        console.error('更新资料后同步站点配置文件失败:', syncError);
+      }
     }
 
     res.json({ code: 0, msg: '更新成功' });

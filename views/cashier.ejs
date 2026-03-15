@@ -683,6 +683,16 @@
       var selectedType = '<%= order.pay_type || "" %>';
       var selectedGroupId = '<%= selectedGroupId %>';
       var tradeNo = '<%= order.trade_no %>';
+      var testVisitorId = '<%= testVisitorId || "" %>';
+      var testVisitorSig = '<%= testVisitorSig || "" %>';
+
+      function buildCheckStatusUrl() {
+        var query = 'trade_no=' + encodeURIComponent(tradeNo);
+        if (testVisitorId && testVisitorSig) {
+          query += '&visitor_id=' + encodeURIComponent(testVisitorId) + '&visitor_sig=' + encodeURIComponent(testVisitorSig);
+        }
+        return '/api/pay/check_status?' + query;
+      }
       
       // 已锁定的支付信息（订单已选择通道，不可更改）
       var lockedPayment = <%- typeof lockedPayment !== 'undefined' && lockedPayment ? JSON.stringify(lockedPayment) : 'null' %>;
@@ -760,7 +770,7 @@
       
       // 检测支付宝H5支付结果
       window.checkAlipayH5Result = function() {
-        fetch('/api/pay/check_status?trade_no=' + tradeNo)
+        fetch(buildCheckStatusUrl())
           .then(function(response) { return response.json(); })
           .then(function(data) {
             if (data.code === 0 && data.status === 1) {
@@ -829,7 +839,7 @@
       function startPolling() {
         clearInterval(checkInterval);
         checkInterval = setInterval(function() {
-          fetch('/api/pay/check_status?trade_no=' + tradeNo)
+          fetch(buildCheckStatusUrl())
             .then(function(res) { return res.json(); })
             .then(function(data) {
               if (data.code === 0 && data.paid) {

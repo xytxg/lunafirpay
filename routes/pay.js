@@ -4,6 +4,7 @@ const db = require('../config/database');
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const crypto = require('crypto');
 
 // 加载配置（必须存在 config.yaml）
 const configPath = path.join(__dirname, '..', 'config.yaml');
@@ -397,26 +398,45 @@ async function checkAndAutoCloseChannel(errorMsg, channel) {
   }
 }
 
-// 获取支付类型列表（基于支付组'config）（单服务商模式）
-async function getPayTypesByGroups() {
-  // 查询默认支付宝'
-  const [payGroups] = await db.query(
-    'SELECT * FROM provider_pay_groups WHERE is_default = 1 LIMIT 1'
-  );
-  
-  // 如果没有默认组，取第一个组
-  let payGroup = payGroups[0];
+// 获取支付组（优先指定ID，其次默认组，最后第一条）
+async function getPayGroup(payGroupId = null) {
+  let payGroup = null;
+
+  if (payGroupId) {
+    const groupId = parseInt(payGroupId, 10);
+    if (!isNaN(groupId) && groupId > 0) {
+      const [specified] = await db.query(
+        'SELECT * FROM provider_pay_groups WHERE id = ? LIMIT 1',
+        [groupId]
+      );
+      payGroup = specified[0] || null;
+    }
+  }
+
+  if (!payGroup) {
+    const [defaults] = await db.query(
+      'SELECT * FROM provider_pay_groups WHERE is_default = 1 LIMIT 1'
+    );
+    payGroup = defaults[0] || null;
+  }
+
   if (!payGroup) {
     const [allGroups] = await db.query(
       'SELECT * FROM provider_pay_groups ORDER BY id LIMIT 1'
     );
-    payGroup = allGroups[0];
+    payGroup = allGroups[0] || null;
   }
-  
+
+  return payGroup;
+}
+
+// 获取支付类型列表（基于支付组 config）（单服务商模式）
+async function getPayTypesByGroups(payGroupId = null) {
+  const payGroup = await getPayGroup(payGroupId);
   if (!payGroup || !payGroup.config) {
     return [];
   }
-  
+
   // 解析 config（键为 pay_types.id，值包含 channel_mode）
   let config = {};
   try {
@@ -424,17 +444,17 @@ async function getPayTypesByGroups() {
   } catch (e) {
     return [];
   }
-  
+
   // 获取所有启用的支付类型 ID（channel_mode !== 0 表示启用）
   const enabledPayTypeIds = Object.entries(config)
     .filter(([id, cfg]) => cfg && cfg.channel_mode !== 0)
-    .map(([id]) => parseInt(id))
+    .map(([id]) => parseInt(id, 10))
     .filter(id => !isNaN(id));
-  
+
   if (enabledPayTypeIds.length === 0) {
     return [];
   }
-  
+
   // 从配置文件获取启用的支付类型信息
   const allPayTypes = getAllPayTypes();
   const payTypes = allPayTypes
@@ -446,19 +466,18 @@ async function getPayTypesByGroups() {
       icon: pt.icon,
       sort: pt.sort
     }));
-  
+
   // 检查每个支付类型是否有可用的通道
   const result = [];
   for (const pt of payTypes) {
-    // 获取该支付类型的配置
     const typeConfig = config[pt.id.toString()] || {};
-    
+
     // 检查该支付类型下是否有启用的通道（单服务商模式）
     const [channels] = await db.query(
       'SELECT id FROM provider_channels WHERE FIND_IN_SET(?, pay_type) AND status = 1 AND (is_deleted = 0 OR is_deleted IS NULL) LIMIT 1',
       [pt.type_code]
     );
-    
+
     if (channels.length > 0) {
       result.push({
         type_code: pt.type_code,
@@ -466,13 +485,13 @@ async function getPayTypesByGroups() {
         icon: pt.icon || (pt.type_code + '.ico'),
         pay_type_id: pt.id,
         sort: pt.sort || 999,
-        group_id: payGroup.id,  // provider_pay_groups.id
+        group_id: payGroup.id,
         channel_mode: typeConfig.channel_mode,
-        roll_group_id: typeConfig.group_id  // channel_groups.id (轮询组）
+        roll_group_id: typeConfig.group_id
       });
     }
   }
-  
+
   return result.sort((a, b) => a.sort - b.sort);
 }
 
@@ -580,6 +599,99 @@ function buildPayResponse(version, order, channel, payUrl, payType) {
       pay_info: payType === 'jsapi' ? payUrl : undefined // JSAPI支付返回的支付参数
     };
   }
+}
+
+// 获取测试支付运行时配置
+async function getTestPaymentRuntimeConfig() {
+  const enabledValue = await systemConfig.getConfig('test_pay_enabled', '0');
+  const groupValue = await systemConfig.getConfig('test_pay_group_id', '');
+  const maxAmountValue = await systemConfig.getConfig('test_pay_max_amount', '50000');
+  const autoRefundValue = await systemConfig.getConfig('test_pay_auto_refund', '0');
+  const parsedGroupId = parseInt(groupValue, 10);
+  const parsedMaxAmount = parseFloat(maxAmountValue);
+
+  return {
+    enabled: String(enabledValue) === '1',
+    payGroupId: !isNaN(parsedGroupId) && parsedGroupId > 0 ? parsedGroupId : null,
+    maxAmount: !isNaN(parsedMaxAmount) && parsedMaxAmount > 0 ? parseFloat(parsedMaxAmount.toFixed(2)) : 50000,
+    autoRefund: String(autoRefundValue) === '1'
+  };
+}
+
+const TEST_PAY_VISITOR_SECRET = String(
+  (config && config.turnstile && config.turnstile.secretKey) || 'epay-test-pay-visitor-sign-secret'
+);
+
+function normalizeTestVisitorId(visitorId) {
+  return typeof visitorId === 'string' ? visitorId.trim() : '';
+}
+
+function isValidTestVisitorId(visitorId) {
+  return /^[A-Za-z0-9_-]{16,80}$/.test(visitorId);
+}
+
+function signTestOrderVisitor(tradeNo, visitorId) {
+  return crypto
+    .createHmac('sha256', TEST_PAY_VISITOR_SECRET)
+    .update(`${tradeNo}|${visitorId}`)
+    .digest('hex');
+}
+
+function safeEqualString(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') {
+    return false;
+  }
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  if (aBuffer.length !== bBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function parseOrderParam(rawParam) {
+  if (!rawParam) {
+    return {};
+  }
+  if (typeof rawParam === 'object' && !Array.isArray(rawParam)) {
+    return rawParam;
+  }
+  if (typeof rawParam !== 'string') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(rawParam);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function verifyTestOrderVisitorAccess(order, visitorId, visitorSig) {
+  if (!order || order.order_type !== 'test') {
+    return { ok: true };
+  }
+
+  const orderParam = parseOrderParam(order.param);
+  const savedVisitorId = normalizeTestVisitorId(orderParam?.test_pay?.visitor_id);
+
+  // 兼容历史测试订单：若未记录访客标识，则不强制拦截
+  if (!savedVisitorId) {
+    return { ok: true };
+  }
+
+  const currentVisitorId = normalizeTestVisitorId(visitorId);
+  const currentVisitorSig = typeof visitorSig === 'string' ? visitorSig.trim() : '';
+  if (!isValidTestVisitorId(currentVisitorId) || !currentVisitorSig) {
+    return { ok: false };
+  }
+
+  const expectedSig = signTestOrderVisitor(order.trade_no, savedVisitorId);
+  if (currentVisitorId !== savedVisitorId || !safeEqualString(currentVisitorSig, expectedSig)) {
+    return { ok: false };
+  }
+
+  return { ok: true, visitorId: savedVisitorId, visitorSig: expectedSig };
 }
 
 // ==================== V1 接口（MD5签名）===================
@@ -1146,6 +1258,265 @@ router.all('/v2/query', async (req, res) => {
 
 // ==================== 公共接口 ====================
 
+// 获取测试支付配置（公开）
+router.get('/test/config', async (req, res) => {
+  try {
+    const testRuntime = await getTestPaymentRuntimeConfig();
+
+    if (!testRuntime.enabled) {
+      return res.json({
+        code: 0,
+        msg: 'success',
+        data: {
+          enabled: false,
+          reason: '测试支付未开启',
+          pay_group_id: testRuntime.payGroupId,
+          pay_group_name: '',
+          max_amount: testRuntime.maxAmount,
+          auto_refund: testRuntime.autoRefund,
+          pay_types: []
+        }
+      });
+    }
+
+    if (!testRuntime.payGroupId) {
+      return res.json({
+        code: 0,
+        msg: 'success',
+        data: {
+          enabled: false,
+          reason: '测试支付未配置支付组',
+          pay_group_id: null,
+          pay_group_name: '',
+          max_amount: testRuntime.maxAmount,
+          auto_refund: testRuntime.autoRefund,
+          pay_types: []
+        }
+      });
+    }
+
+    const [groups] = await db.query(
+      'SELECT id, name FROM provider_pay_groups WHERE id = ? LIMIT 1',
+      [testRuntime.payGroupId]
+    );
+
+    if (groups.length === 0) {
+      return res.json({
+        code: 0,
+        msg: 'success',
+        data: {
+          enabled: false,
+          reason: '测试支付组不存在',
+          pay_group_id: testRuntime.payGroupId,
+          pay_group_name: '',
+          max_amount: testRuntime.maxAmount,
+          auto_refund: testRuntime.autoRefund,
+          pay_types: []
+        }
+      });
+    }
+
+    const payTypes = await getPayTypesByGroups(testRuntime.payGroupId);
+
+    if (payTypes.length === 0) {
+      return res.json({
+        code: 0,
+        msg: 'success',
+        data: {
+          enabled: false,
+          reason: '测试支付组暂无可用通道',
+          pay_group_id: testRuntime.payGroupId,
+          pay_group_name: groups[0].name || '',
+          max_amount: testRuntime.maxAmount,
+          auto_refund: testRuntime.autoRefund,
+          pay_types: []
+        }
+      });
+    }
+
+    res.json({
+      code: 0,
+      msg: 'success',
+      data: {
+        enabled: true,
+        reason: '',
+        pay_group_id: testRuntime.payGroupId,
+        pay_group_name: groups[0].name || '',
+        max_amount: testRuntime.maxAmount,
+        auto_refund: testRuntime.autoRefund,
+        pay_types: payTypes
+      }
+    });
+  } catch (error) {
+    console.error('Get Test Pay Config Error:', error);
+    res.json({ code: -1, msg: '系统错误' });
+  }
+});
+
+// 创建测试支付订单（公开）
+router.post('/test/create', async (req, res) => {
+  try {
+    const { money, pay_type, name, visitor_id } = req.body || {};
+    const testRuntime = await getTestPaymentRuntimeConfig();
+
+    if (!testRuntime.enabled) {
+      return res.json({ code: 1, msg: '测试支付未开启' });
+    }
+    if (!testRuntime.payGroupId) {
+      return res.json({ code: 1, msg: '测试支付未配置支付组' });
+    }
+    if (!pay_type) {
+      return res.json({ code: 1, msg: '请选择支付方式' });
+    }
+
+    const visitorId = normalizeTestVisitorId(visitor_id);
+    if (!isValidTestVisitorId(visitorId)) {
+      return res.json({ code: 1, msg: '访客标识无效，请刷新页面后重试' });
+    }
+
+    const payTypes = await getPayTypesByGroups(testRuntime.payGroupId);
+    if (payTypes.length === 0) {
+      return res.json({ code: 1, msg: '测试支付组暂无可用通道' });
+    }
+
+    const selectedPayType = payTypes.find((pt) => pt.type_code === pay_type);
+    if (!selectedPayType) {
+      return res.json({ code: 1, msg: '当前支付方式不在测试支付组中' });
+    }
+
+    const moneyFloat = parseFloat(money);
+    if (isNaN(moneyFloat) || moneyFloat <= 0) {
+      return res.json({ code: 1, msg: '金额不合法' });
+    }
+    if (moneyFloat > testRuntime.maxAmount) {
+      return res.json({ code: 1, msg: `金额不能超过 ${testRuntime.maxAmount.toFixed(2)} 元` });
+    }
+
+    const [users] = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [1]);
+    if (users.length === 0) {
+      return res.json({ code: 1, msg: '管理员账户不存在，无法创建测试订单' });
+    }
+
+    const [merchants] = await db.query(
+      'SELECT fee_rate as merchant_fee_rate, fee_rates as merchant_fee_rates, fee_payer, pay_group_id FROM merchants WHERE user_id = ? LIMIT 1',
+      [1]
+    );
+    const merchantForFee = merchants[0]
+      ? { ...merchants[0], pay_group_id: testRuntime.payGroupId }
+      : { pay_group_id: testRuntime.payGroupId };
+
+    const feeRate = await getMerchantFeeRate(merchantForFee, pay_type);
+    const feePayer = merchantForFee.fee_payer || 'merchant';
+
+    const tradeNo = generateTradeNo();
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    const baseUrl = `${protocol}://${host}`;
+    const visitorSig = signTestOrderVisitor(tradeNo, visitorId);
+    const returnUrl = `${baseUrl}/test-pay?ok=1&trade_no=${tradeNo}&visitor_id=${encodeURIComponent(visitorId)}&visitor_sig=${visitorSig}`;
+
+    const orderResult = await createOrder({
+      merchantId: 1,
+      channelId: null,
+      tradeNo,
+      outTradeNo: tradeNo,
+      type: pay_type,
+      name: (name && String(name).trim()) || '支付测试',
+      money: parseFloat(moneyFloat.toFixed(2)),
+      clientIp: getClientIP(req),
+      device: 'pc',
+      notifyUrl: '',
+      returnUrl,
+      feeRate,
+      feePayer,
+      orderType: 'test'
+    });
+
+    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${orderResult.tradeNo}`;
+
+    // 复用 param 字段记录测试订单访客标识（不新增数据库列）
+    const [orderRows] = await db.query('SELECT param FROM orders WHERE id = ? LIMIT 1', [orderResult.orderId]);
+    const orderParam = orderRows.length > 0 ? parseOrderParam(orderRows[0].param) : {};
+    orderParam.test_pay = {
+      visitor_id: visitorId,
+      signed_at: Date.now()
+    };
+    await db.query('UPDATE orders SET param = ? WHERE id = ?', [JSON.stringify(orderParam), orderResult.orderId]);
+
+    res.json({
+      code: 0,
+      msg: 'success',
+      data: {
+        trade_no: orderResult.tradeNo,
+        cashier_url: cashierUrl,
+        pay_type,
+        visitor_id: visitorId,
+        visitor_sig: visitorSig
+      }
+    });
+  } catch (error) {
+    console.error('Create Test Pay Error:', error);
+    res.json({ code: -1, msg: '系统错误' });
+  }
+});
+
+// 取消测试支付订单（公开，仅当前访客可取消自己的未支付测试订单）
+router.post('/test/cancel', async (req, res) => {
+  try {
+    const { trade_no, visitor_id, visitor_sig } = req.body || {};
+    const tradeNo = typeof trade_no === 'string' ? trade_no.trim() : '';
+
+    if (!tradeNo) {
+      return res.json({ code: 1, msg: '订单号不能为空' });
+    }
+
+    const [orders] = await db.query(
+      'SELECT id, trade_no, status, order_type, param FROM orders WHERE trade_no = ? LIMIT 1',
+      [tradeNo]
+    );
+
+    if (orders.length === 0) {
+      return res.json({ code: 1, msg: '订单不存在' });
+    }
+
+    const order = orders[0];
+    if (order.order_type !== 'test') {
+      return res.json({ code: 1, msg: '仅测试订单支持取消' });
+    }
+
+    const accessResult = verifyTestOrderVisitorAccess(order, visitor_id, visitor_sig);
+    if (!accessResult.ok) {
+      return res.status(403).json({ code: 1, msg: '无权取消该订单' });
+    }
+
+    if (order.status === 1) {
+      return res.json({ code: 1, msg: '订单已支付，无法取消' });
+    }
+
+    if (order.status !== 0) {
+      return res.json({ code: 0, msg: '订单已关闭' });
+    }
+
+    const [updateResult] = await db.query(
+      'UPDATE orders SET status = 2 WHERE id = ? AND status = 0',
+      [order.id]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      const [latest] = await db.query('SELECT status FROM orders WHERE id = ? LIMIT 1', [order.id]);
+      if (latest.length > 0 && latest[0].status === 1) {
+        return res.json({ code: 1, msg: '订单已支付，无法取消' });
+      }
+      return res.json({ code: 1, msg: '订单状态已变化，请刷新后重试' });
+    }
+
+    return res.json({ code: 0, msg: '订单已取消' });
+  } catch (error) {
+    console.error('Cancel Test Order Error:', error);
+    return res.json({ code: -1, msg: '系统错误' });
+  }
+});
+
 // 收银台页面
 router.get('/cashier', async (req, res) => {
   try {
@@ -1168,15 +1539,6 @@ router.get('/cashier', async (req, res) => {
     }
 
     const order = orders[0];
-
-    // 记录访客 IP（仅当 ip 列为空时更新）
-    if (!order.ip) {
-      const visitorIp = getClientIP(req);
-      if (visitorIp) {
-        await db.query('UPDATE orders SET ip = ? WHERE trade_no = ?', [visitorIp, trade_no]);
-        order.ip = visitorIp;
-      }
-    }
 
     // 状态: 0=待支付 1=已支付 2=已关闭
     if (order.status !== 0) {
@@ -1210,13 +1572,26 @@ router.get('/cashier', async (req, res) => {
 
     let payTypes = [];
     let selectedGroupId = '';
-    
+    let forcedGroupId = null;
+
+    if (order.order_type === 'test') {
+      const testRuntime = await getTestPaymentRuntimeConfig();
+      forcedGroupId = testRuntime.payGroupId;
+      if (!forcedGroupId) {
+        return res.render('error', { message: '测试支付未配置支付组', code: 'TEST_PAY_GROUP_MISSING', backUrl: '/' });
+      }
+    }
+
     // 获取服务商配置的支付类型列表
-    payTypes = await getPayTypesByGroups();
+    payTypes = await getPayTypesByGroups(forcedGroupId);
 
     // 计算当前选中的支付方式对应的 group_id
-    const currentPayType = payTypes.find(p => p.type_code === order.pay_type);
-    selectedGroupId = currentPayType ? (currentPayType.group_id || '') : '';
+    if (forcedGroupId) {
+      selectedGroupId = String(forcedGroupId);
+    } else {
+      const currentPayType = payTypes.find(p => p.type_code === order.pay_type);
+      selectedGroupId = currentPayType ? (currentPayType.group_id || '') : '';
+    }
 
     // 处理页面订单名称（pageordername 配置）
     const pageOrderName = await systemConfig.getConfig('page_order_name', '0');
@@ -1237,6 +1612,17 @@ router.get('/cashier', async (req, res) => {
       }
     }
 
+    let testVisitorId = '';
+    let testVisitorSig = '';
+    if (order.order_type === 'test') {
+      const orderParam = parseOrderParam(order.param);
+      const savedVisitorId = normalizeTestVisitorId(orderParam?.test_pay?.visitor_id);
+      if (savedVisitorId) {
+        testVisitorId = savedVisitorId;
+        testVisitorSig = signTestOrderVisitor(order.trade_no, savedVisitorId);
+      }
+    }
+
     // 渲染收银台页面（使用 EJS 模板）
     res.render('cashier', {
       order: { ...order, display_name: displayOrderName },  // 添加显示名称
@@ -1244,7 +1630,9 @@ router.get('/cashier', async (req, res) => {
       selectedGroupId,
       sitename: order.sitename || '在线支付',
       isCrypto: false,
-      lockedPayment  // 传递锁定的支付信息
+      lockedPayment,  // 传递锁定的支付信息
+      testVisitorId,
+      testVisitorSig
     });
 
   } catch (error) {
@@ -1256,7 +1644,7 @@ router.get('/cashier', async (req, res) => {
 // 选择支付类型（用户在收银台选择支付方式时调用）
 router.post('/select_channel', async (req, res) => {
   try {
-    const { trade_no, pay_type, group_id } = req.body;
+    const { trade_no, pay_type } = req.body;
 
     if (!trade_no) {
       return res.json({ code: 1, msg: '订单号不能为空' });
@@ -1281,6 +1669,20 @@ router.post('/select_channel', async (req, res) => {
     // 只有待支付订单可以修改
     if (order.status !== 0) {
       return res.json({ code: 1, msg: '订单状态异常' });
+    }
+
+    // 测试订单只能选择测试支付组内的支付方式
+    if (order.order_type === 'test') {
+      const testRuntime = await getTestPaymentRuntimeConfig();
+      if (!testRuntime.payGroupId) {
+        return res.json({ code: 1, msg: '测试支付未配置支付组' });
+      }
+
+      const testPayTypes = await getPayTypesByGroups(testRuntime.payGroupId);
+      const inTestGroup = testPayTypes.some(pt => pt.type_code === pay_type);
+      if (!inTestGroup) {
+        return res.json({ code: 1, msg: '该支付方式不在测试支付组中' });
+      }
     }
 
     // 只更新 pay_type（通道会在 dopay 时根据组配置选择）
@@ -1539,6 +1941,15 @@ router.post('/dopay', async (req, res) => {
       return res.json({ code: 1, msg: '订单状态异常' });
     }
 
+    let effectiveGroupId = group_id;
+    if (order.order_type === 'test') {
+      const testRuntime = await getTestPaymentRuntimeConfig();
+      if (!testRuntime.payGroupId) {
+        return res.json({ code: 1, msg: '测试支付未配置支付组' });
+      }
+      effectiveGroupId = testRuntime.payGroupId;
+    }
+
     let channelConfig;
     let finalPayType;
     
@@ -1582,8 +1993,8 @@ router.post('/dopay', async (req, res) => {
         }
       }
 
-      // 普通订单处理，传入 minAge 用于过滤通道
-      channelConfig = await selectChannelFromGroup(finalPayType, group_id, { minAge: merchantMinAge });
+      // 根据支付组选择通道（测试订单强制使用测试支付组）
+      channelConfig = await selectChannelFromGroup(finalPayType, effectiveGroupId, { minAge: merchantMinAge });
 
       if (!channelConfig) {
         return res.json({ code: 1, msg: merchantMinAge ? '没有符合年龄限制的支付通道可用' : '支付通道不可用，请联系服务商' });
@@ -1594,7 +2005,12 @@ router.post('/dopay', async (req, res) => {
         'SELECT fee_rate as merchant_fee_rate, fee_payer, pay_group_id FROM merchants WHERE user_id = ?',
         [order.merchant_id]
       );
-      const merchant = merchants[0] || {};
+      const merchant = merchants[0]
+        ? {
+            ...merchants[0],
+            pay_group_id: order.order_type === 'test' ? effectiveGroupId : merchants[0].pay_group_id
+          }
+        : (order.order_type === 'test' ? { pay_group_id: effectiveGroupId } : {});
       
       // 获取费率：商户个人费率优先，否则用支付组费率
       const feeRate = await getMerchantFeeRate(merchant, finalPayType);
@@ -2111,6 +2527,140 @@ router.all('/return/:trade_no', async (req, res) => {
   }
 });
 
+function generateRefundNo() {
+  return 'R' + Date.now() + Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+// 测试订单支付成功后自动秒退（可配置）
+async function tryAutoRefundTestOrder(order) {
+  if (!order || order.order_type !== 'test') {
+    return;
+  }
+
+  const testRuntime = await getTestPaymentRuntimeConfig();
+  if (!testRuntime.enabled || !testRuntime.autoRefund) {
+    return;
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      `SELECT id, trade_no, out_trade_no, merchant_id, channel_id, plugin_name, pay_type, name,
+              money, real_money, fee_money, status, refund_status, refund_money, balance_added, api_trade_no
+       FROM orders WHERE id = ? FOR UPDATE`,
+      [order.id]
+    );
+
+    if (rows.length === 0) {
+      await connection.rollback();
+      return;
+    }
+
+    const lockedOrder = rows[0];
+    const refundedMoney = parseFloat(lockedOrder.refund_money || 0);
+    const refundStatus = parseInt(lockedOrder.refund_status || 0, 10);
+
+    // 仅待退款的已支付测试订单执行秒退，避免重复退款
+    if (lockedOrder.status !== 1 || refundStatus === 1 || refundedMoney > 0) {
+      await connection.rollback();
+      return;
+    }
+
+    if (!lockedOrder.api_trade_no || !lockedOrder.channel_id) {
+      await connection.rollback();
+      console.warn(`测试订单自动退款跳过: 缺少上游交易号或通道, trade_no=${lockedOrder.trade_no}`);
+      return;
+    }
+
+    const [channels] = await connection.query(
+      'SELECT * FROM provider_channels WHERE id = ?',
+      [lockedOrder.channel_id]
+    );
+
+    if (channels.length === 0) {
+      await connection.rollback();
+      console.warn(`测试订单自动退款跳过: 通道不存在, trade_no=${lockedOrder.trade_no}`);
+      return;
+    }
+
+    const channel = channels[0];
+    const plugin = pluginLoader.getPlugin(channel.plugin_name || lockedOrder.plugin_name);
+    if (!plugin || typeof plugin.refund !== 'function') {
+      await connection.rollback();
+      console.warn(`测试订单自动退款跳过: 通道不支持退款, trade_no=${lockedOrder.trade_no}`);
+      return;
+    }
+
+    let channelConfig;
+    try {
+      channelConfig = channel.config ? JSON.parse(channel.config) : {};
+    } catch (e) {
+      channelConfig = {};
+    }
+
+    const fullConfig = {
+      ...channelConfig,
+      appid: channel.app_id,
+      appmchid: channel.app_mch_id,
+      appkey: channel.app_key,
+      appsecret: channel.app_secret
+    };
+
+    const totalMoney = parseFloat(lockedOrder.real_money || lockedOrder.money || 0);
+    if (!(totalMoney > 0)) {
+      await connection.rollback();
+      console.warn(`测试订单自动退款跳过: 金额无效, trade_no=${lockedOrder.trade_no}`);
+      return;
+    }
+
+    const refundNo = generateRefundNo();
+    const refundResult = await plugin.refund(fullConfig, {
+      trade_no: lockedOrder.trade_no,
+      api_trade_no: lockedOrder.api_trade_no,
+      refund_no: refundNo,
+      refund_money: totalMoney,
+      total_money: totalMoney
+    });
+
+    if (!refundResult || refundResult.code !== 0) {
+      await connection.rollback();
+      const refundMsg = refundResult && refundResult.msg ? refundResult.msg : '未知错误';
+      console.warn(`测试订单自动退款失败: trade_no=${lockedOrder.trade_no}, msg=${refundMsg}`);
+      return;
+    }
+
+    // 若此前已给商户加款，则秒退时等额扣回商户实收金额
+    if (lockedOrder.balance_added) {
+      const orderMoney = parseFloat(lockedOrder.money || 0);
+      const feeMoney = parseFloat(lockedOrder.fee_money || 0);
+      const reduceMoney = Math.round((orderMoney - feeMoney) * 100) / 100;
+      if (reduceMoney > 0) {
+        await connection.query(
+          'UPDATE merchants SET balance = balance - ? WHERE user_id = ?',
+          [reduceMoney, lockedOrder.merchant_id]
+        );
+      }
+    }
+
+    await connection.query(
+      'UPDATE orders SET status = 2, refund_status = 1, refund_no = ?, refund_money = ?, refund_reason = ?, refund_at = NOW() WHERE id = ?',
+      [refundNo, totalMoney, '测试支付自动秒退', lockedOrder.id]
+    );
+
+    await connection.commit();
+    console.log(`测试订单自动退款成功: trade_no=${lockedOrder.trade_no}, refund_no=${refundNo}`);
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {}
+    console.error('测试订单自动退款异常:', error);
+  } finally {
+    connection.release();
+  }
+}
+
 // 发送下游通知给商户，并增加商户余额
 async function sendDownstreamNotify(order) {
   try {
@@ -2119,87 +2669,81 @@ async function sendDownstreamNotify(order) {
       'SELECT api_key, pid FROM merchants WHERE user_id = ?',
       [order.merchant_id]
     );
+    const merchant = merchants[0] || null;
 
-    if (merchants.length === 0) return;
+    if (merchant) {
+      // 增加商户余额（订单金额 - 手续费）
+      // 使用事务保护避免重复增加和数据不一致
+      const settleAmount = parseFloat(order.money) - parseFloat(order.fee_money || 0);
+      if (settleAmount > 0) {
+        const connection = await db.getConnection();
+        try {
+          await connection.beginTransaction();
 
-    const merchant = merchants[0];
-
-    // 增加商户余额（订单金额 - 手续费）
-    // 使用事务保护避免重复增加和数据不一致
-    const settleAmount = parseFloat(order.money) - parseFloat(order.fee_money || 0);
-    if (settleAmount > 0) {
-      // 使用事务保护余额操作
-      const connection = await db.getConnection();
-      try {
-        await connection.beginTransaction();
-        
-        // 检查是否已增加过余额（使用 FOR UPDATE 锁定行）
-        const [orderCheck] = await connection.query(
-          'SELECT balance_added FROM orders WHERE id = ? FOR UPDATE', 
-          [order.id]
-        );
-        
-        if (orderCheck.length > 0 && !orderCheck[0].balance_added) {
-          await connection.query(
-            'UPDATE merchants SET balance = balance + ? WHERE user_id = ?',
-            [settleAmount, order.merchant_id]
+          const [orderCheck] = await connection.query(
+            'SELECT balance_added FROM orders WHERE id = ? FOR UPDATE',
+            [order.id]
           );
-          // 标记已增加余额
-          await connection.query('UPDATE orders SET balance_added = 1 WHERE id = ?', [order.id]);
-          console.log(`商户余额增加: user_id=${order.merchant_id}, amount=${settleAmount}`);
+
+          if (orderCheck.length > 0 && !orderCheck[0].balance_added) {
+            await connection.query(
+              'UPDATE merchants SET balance = balance + ? WHERE user_id = ?',
+              [settleAmount, order.merchant_id]
+            );
+            await connection.query('UPDATE orders SET balance_added = 1 WHERE id = ?', [order.id]);
+            console.log(`商户余额增加: user_id=${order.merchant_id}, amount=${settleAmount}`);
+          }
+
+          await connection.commit();
+        } catch (txError) {
+          await connection.rollback();
+          console.error('余额增加事务失败:', txError);
+        } finally {
+          connection.release();
         }
-        
-        await connection.commit();
-      } catch (txError) {
-        await connection.rollback();
-        console.error('余额增加事务失败:', txError);
-      } finally {
-        connection.release();
+      }
+
+      // 发送 Telegram 通知给用户（订单交易通知）
+      try {
+        telegramService.notifyPayment({
+          trade_no: order.trade_no,
+          out_trade_no: order.out_trade_no,
+          money: order.money,
+          real_money: order.real_money || order.money,
+          type: order.pay_type,
+          name: order.name,
+          status: 2,
+          merchant_id: order.merchant_id,
+          pid: merchant.pid
+        });
+      } catch (tgError) {
+        console.error('发送 Telegram 用户通知失败:', tgError);
+      }
+
+      if (order.notify_url) {
+        const notifyOrderName = await systemConfig.getConfig('notify_order_name', '0');
+        let orderForNotify = order;
+        if (notifyOrderName === '1') {
+          orderForNotify = { ...order, name: 'product' };
+        }
+
+        const notifyParams = buildCallbackParams(orderForNotify, merchant.api_key, merchant.pid);
+        console.log('发送商户通知:', order.notify_url, notifyParams);
+
+        const success = await sendNotify(order.notify_url, notifyParams);
+        console.log('商户通知结果:', success ? '成功' : '失败');
+
+        await db.query(
+          'UPDATE orders SET notify_status = ?, notify_count = notify_count + 1, notify_time = NOW() WHERE id = ?',
+          [success ? 1 : 2, order.id]
+        );
       }
     }
 
-    // 发送 Telegram 通知给用户（订单交易通知）
-    try {
-      // merchant.pid 是 API 使用的12位随机ID
-      telegramService.notifyPayment({
-        trade_no: order.trade_no,
-        out_trade_no: order.out_trade_no,
-        money: order.money,
-        real_money: order.real_money || order.money,
-        type: order.pay_type,
-        name: order.name,
-        status: 2, // 已完成（回调已发送）
-        merchant_id: order.merchant_id,
-        pid: merchant.pid
-      });
-    } catch (tgError) {
-      console.error('发送 Telegram 用户通知失败:', tgError);
-    }
-
-    // 发送通知
-    if (!order.notify_url) return;
-
-    // 处理回调通知中的订单名称（notifyordername 配置）
-    const notifyOrderName = await systemConfig.getConfig('notify_order_name', '0');
-    let orderForNotify = order;
-    if (notifyOrderName === '1') {
-      // 启用了回调订单名称隐藏，使用固定名称
-      orderForNotify = { ...order, name: 'product' };
-    }
-
-    const notifyParams = buildCallbackParams(orderForNotify, merchant.api_key, merchant.pid);
-    console.log('发送商户通知:', order.notify_url, notifyParams);
-    
-    const success = await sendNotify(order.notify_url, notifyParams);
-    console.log('商户通知结果:', success ? '成功' : '失败');
-
-    // 更新通知状态
-    await db.query(
-      'UPDATE orders SET notify_status = ?, notify_count = notify_count + 1, notify_time = NOW() WHERE id = ?',
-      [success ? 1 : 2, order.id]
-    );
+    // 测试订单可配置秒退，放在支付成功后续逻辑最后执行
+    await tryAutoRefundTestOrder(order);
   } catch (error) {
-    console.error('发送商户通知失败:', error);
+    console.error('处理支付后续逻辑失败:', error);
   }
 }
 
@@ -2240,14 +2784,14 @@ router.get('/qrcode', async (req, res) => {
 // 检查订单状态（供二维码页面轮询组）
 router.get('/check_status', async (req, res) => {
   try {
-    const { trade_no } = req.query;
+    const { trade_no, visitor_id, visitor_sig } = req.query;
 
     if (!trade_no) {
       return res.json({ code: 1, msg: '订单号不能为空' });
     }
 
     const [orders] = await db.query(
-      'SELECT status FROM orders WHERE trade_no = ?',
+      'SELECT trade_no, status, refund_status, order_type, param FROM orders WHERE trade_no = ?',
       [trade_no]
     );
 
@@ -2256,11 +2800,19 @@ router.get('/check_status', async (req, res) => {
     }
 
     const order = orders[0];
-    // status: 0=待支付 1=已支付 2=已关闭'
+    const accessResult = verifyTestOrderVisitorAccess(order, visitor_id, visitor_sig);
+    if (!accessResult.ok) {
+      return res.status(403).json({ code: 1, msg: '无权查询该订单状态' });
+    }
+
+    const refunded = order.status === 2 && parseInt(order.refund_status || 0, 10) === 1;
+    // status: 0=待支付 1=已支付 2=已关闭/退款'
     res.json({ 
       code: 0, 
       status: order.status,
-      paid: order.status === 1
+      refund_status: order.refund_status || 0,
+      paid: order.status === 1 || refunded,
+      refunded
     });
 
   } catch (error) {

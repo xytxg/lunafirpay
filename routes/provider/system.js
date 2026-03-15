@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const systemConfig = require('../../utils/systemConfig');
+const { syncSitePublicConfigFromSystem } = require('../../utils/sitePublicConfig');
 const { requireProviderRamPermission } = require('../auth');
 
 // 获取系统配置（支付设置相关）
@@ -20,7 +21,11 @@ router.get('/system/config', requireProviderRamPermission('settings'), async (re
       api_endpoint: allConfig.api_endpoint || '',
       domain_whitelist_enabled: allConfig.domain_whitelist_enabled || '0',
       user_refund: allConfig.user_refund || '0',
-      auto_approve_merchant: allConfig.auto_approve_merchant || '0'
+      auto_approve_merchant: allConfig.auto_approve_merchant || '0',
+      test_pay_enabled: allConfig.test_pay_enabled || '0',
+      test_pay_group_id: allConfig.test_pay_group_id || '',
+      test_pay_max_amount: allConfig.test_pay_max_amount || '50000',
+      test_pay_auto_refund: allConfig.test_pay_auto_refund || '0'
     };
     
     res.json({ code: 0, data: paymentConfig });
@@ -33,7 +38,20 @@ router.get('/system/config', requireProviderRamPermission('settings'), async (re
 // 更新系统配置
 router.post('/system/config', requireProviderRamPermission('settings'), async (req, res) => {
   try {
-    const { order_name_template, page_order_name, notify_order_name, site_name, api_endpoint, domain_whitelist_enabled, user_refund, auto_approve_merchant } = req.body;
+    const {
+      order_name_template,
+      page_order_name,
+      notify_order_name,
+      site_name,
+      api_endpoint,
+      domain_whitelist_enabled,
+      user_refund,
+      auto_approve_merchant,
+      test_pay_enabled,
+      test_pay_group_id,
+      test_pay_max_amount,
+      test_pay_auto_refund
+    } = req.body;
     
     // 更新配置
     if (order_name_template !== undefined) {
@@ -59,6 +77,25 @@ router.post('/system/config', requireProviderRamPermission('settings'), async (r
     }
     if (auto_approve_merchant !== undefined) {
       await systemConfig.setConfig('auto_approve_merchant', auto_approve_merchant, '注册商户自动开通(0=需审核,1=自动开通)');
+    }
+    if (test_pay_enabled !== undefined) {
+      await systemConfig.setConfig('test_pay_enabled', test_pay_enabled, '测试支付开关(0=关闭,1=开启)');
+    }
+    if (test_pay_group_id !== undefined) {
+      await systemConfig.setConfig('test_pay_group_id', String(test_pay_group_id || ''), '测试支付使用的支付组ID');
+    }
+    if (test_pay_max_amount !== undefined) {
+      await systemConfig.setConfig('test_pay_max_amount', String(test_pay_max_amount || '50000'), '测试支付最大可输入金额');
+    }
+    if (test_pay_auto_refund !== undefined) {
+      await systemConfig.setConfig('test_pay_auto_refund', String(test_pay_auto_refund || '0'), '测试支付成功后自动秒退(0=否,1=是)');
+    }
+
+    // 同步前台站点配置文件（dist/site-config.json）
+    try {
+      await syncSitePublicConfigFromSystem(systemConfig);
+    } catch (syncError) {
+      console.error('同步站点配置文件失败:', syncError);
     }
     
     res.json({ code: 0, msg: '保存成功' });

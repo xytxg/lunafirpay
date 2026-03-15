@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LunaFir</title>
+  <title>支付平台</title>
   <link rel="icon" type="image/png" href="/logo.png">
   
   <!-- Google Fonts -->
@@ -31,8 +31,44 @@
       font-family: 'Poppins', sans-serif;
     }
   </style>
-  <script type="module" crossorigin src="/assets/index.B-RnLWW2.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index.CEhI8cOG.css">
+
+  <script>
+    (function () {
+      function applyTitle(config) {
+        if (config && config.siteName) {
+          document.title = config.siteName;
+        }
+      }
+
+      fetch('/api/system/config', { cache: 'no-store' })
+        .then(function (res) {
+          if (!res.ok) throw new Error('system config not found');
+          return res.json();
+        })
+        .then(function (payload) {
+          return payload && payload.code === 0 ? payload.data : null;
+        })
+        .then(function (config) {
+          if (!config) throw new Error('invalid system config');
+          applyTitle(config);
+        })
+        .catch(function () {
+          return fetch('/site-config.json', { cache: 'no-store' })
+            .then(function (res) {
+              if (!res.ok) throw new Error('site-config not found');
+              return res.json();
+            })
+            .then(function (config) {
+              applyTitle(config);
+            });
+        })
+        .catch(function () {
+          // 使用默认标题，不阻断页面渲染
+        });
+    })();
+  </script>
+  <script type="module" crossorigin src="/assets/index.BdmEHI5L.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index.DKxUVsQW.css">
 </head>
 <body>
   <div id="root"></div>
