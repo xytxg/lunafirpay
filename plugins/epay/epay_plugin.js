@@ -86,6 +86,17 @@ async function httpRequest(url, data = null, method = 'GET') {
 }
 
 /**
+ * 规范化上游接口地址
+ */
+function normalizeAppUrl(appurl) {
+  const raw = typeof appurl === 'string' ? appurl.trim() : '';
+  if (!raw) {
+    throw new Error('易支付通道未配置接口地址(appurl)');
+  }
+  return raw.endsWith('/') ? raw : `${raw}/`;
+}
+
+/**
  * 检测设备类型
  */
 function getDevice(userAgent = '') {
@@ -102,6 +113,7 @@ function getDevice(userAgent = '') {
  */
 async function submit(channelConfig, orderInfo) {
   const { trade_no, money, name, notify_url, return_url, pay_type } = orderInfo;
+  const appurl = normalizeAppUrl(channelConfig.appurl);
 
   // 如果使用mapi接口，返回跳转到支付页面
   if (channelConfig.appswitch === '1') {
@@ -122,7 +134,7 @@ async function submit(channelConfig, orderInfo) {
   };
 
   const requestParams = buildRequestParam(params, channelConfig.appkey);
-  const submitUrl = channelConfig.appurl + 'submit.php';
+  const submitUrl = appurl + 'submit.php';
 
   // 生成表单HTML
   let formHtml = `<form id="dopay" action="${submitUrl}" method="post">`;
@@ -142,6 +154,7 @@ async function submit(channelConfig, orderInfo) {
  */
 async function mapiPay(channelConfig, orderInfo, payType) {
   const { trade_no, money, name, notify_url, return_url, client_ip, userAgent } = orderInfo;
+  const appurl = normalizeAppUrl(channelConfig.appurl);
 
   const params = {
     pid: channelConfig.appid,
@@ -156,7 +169,7 @@ async function mapiPay(channelConfig, orderInfo, payType) {
   };
 
   const requestParams = buildRequestParam(params, channelConfig.appkey);
-  const mapiUrl = channelConfig.appurl + 'mapi.php';
+  const mapiUrl = appurl + 'mapi.php';
 
   const result = await httpRequest(mapiUrl, requestParams, 'POST');
 
@@ -323,7 +336,8 @@ async function returnCallback(channelConfig, returnData, order) {
  * 查询订单
  */
 async function query(channelConfig, tradeNo) {
-  const apiUrl = channelConfig.appurl + 'api.php';
+  const appurl = normalizeAppUrl(channelConfig.appurl);
+  const apiUrl = appurl + 'api.php';
   const url = `${apiUrl}?act=order&pid=${channelConfig.appid}&key=${channelConfig.appkey}&trade_no=${tradeNo}`;
 
   const result = await httpRequest(url);
@@ -342,7 +356,8 @@ async function query(channelConfig, tradeNo) {
 async function refund(channelConfig, refundInfo) {
   const { trade_no, api_trade_no, refund_money, refund_no } = refundInfo;
 
-  const apiUrl = channelConfig.appurl + 'api.php?act=refund';
+  const appurl = normalizeAppUrl(channelConfig.appurl);
+  const apiUrl = appurl + 'api.php?act=refund';
   const postData = {
     pid: channelConfig.appid,
     key: channelConfig.appkey,

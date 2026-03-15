@@ -1570,6 +1570,16 @@ router.get('/cashier', async (req, res) => {
       }
     }
 
+    // 测试订单已在测试页选定支付方式时，直接锁定该方式并自动拉起支付
+    if (!lockedPayment && order.order_type === 'test' && order.pay_type) {
+      lockedPayment = {
+        channel_id: null,
+        pay_type: order.pay_type,
+        plugin_name: '',
+        channel_name: '测试支付已选方式'
+      };
+    }
+
     let payTypes = [];
     let selectedGroupId = '';
     let forcedGroupId = null;
@@ -2531,6 +2541,28 @@ function generateRefundNo() {
   return 'R' + Date.now() + Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+async function markTestAutoRefundFailed(orderId, reason) {
+  const safeReason = String(reason || '自动退款失败')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 255);
+
+  if (!orderId || !safeReason) {
+    return;
+  }
+
+  try {
+    await db.query(
+      `UPDATE orders
+       SET refund_status = 2, refund_reason = ?
+       WHERE id = ? AND status = 1 AND (refund_status IS NULL OR refund_status <> 1)`,
+      [safeReason, orderId]
+    );
+  } catch (error) {
+    console.error(`记录测试订单自动退款失败原因异常: order_id=${orderId}`, error);
+  }
+}
+
 // 测试订单支付成功后自动秒退（可配置）
 async function tryAutoRefundTestOrder(order) {
   if (!order || order.order_type !== 'test') {
@@ -2570,6 +2602,7 @@ async function tryAutoRefundTestOrder(order) {
 
     if (!lockedOrder.api_trade_no || !lockedOrder.channel_id) {
       await connection.rollback();
+      await markTestAutoRefundFailed(lockedOrder.id, '自动退款失败：缺少上游交易号或通道');
       console.warn(`测试订单自动退款跳过: 缺少上游交易号或通道, trade_no=${lockedOrder.trade_no}`);
       return;
     }
@@ -2581,6 +2614,7 @@ async function tryAutoRefundTestOrder(order) {
 
     if (channels.length === 0) {
       await connection.rollback();
+      await markTestAutoRefundFailed(lockedOrder.id, '自动退款失败：支付通道不存在');
       console.warn(`测试订单自动退款跳过: 通道不存在, trade_no=${lockedOrder.trade_no}`);
       return;
     }
@@ -2589,28 +2623,38 @@ async function tryAutoRefundTestOrder(order) {
     const plugin = pluginLoader.getPlugin(channel.plugin_name || lockedOrder.plugin_name);
     if (!plugin || typeof plugin.refund !== 'function') {
       await connection.rollback();
+      await markTestAutoRefundFailed(lockedOrder.id, '自动退款失败：当前通道不支持退款');
       console.warn(`测试订单自动退款跳过: 通道不支持退款, trade_no=${lockedOrder.trade_no}`);
       return;
     }
 
-    let channelConfig;
+    let channelConfigJson;
     try {
-      channelConfig = channel.config ? JSON.parse(channel.config) : {};
+      channelConfigJson = channel.config ? JSON.parse(channel.config) : {};
     } catch (e) {
-      channelConfig = {};
+      channelConfigJson = {};
     }
 
+    const channelParams = (channelConfigJson && typeof channelConfigJson === 'object')
+      ? (channelConfigJson.params || {})
+      : {};
+
     const fullConfig = {
-      ...channelConfig,
-      appid: channel.app_id,
-      appmchid: channel.app_mch_id,
-      appkey: channel.app_key,
-      appsecret: channel.app_secret
+      ...channelParams,
+      appurl: channelParams.appurl || '',
+      appid: channelParams.appid || channel.app_id,
+      appmchid: channelParams.appmchid || channel.app_mch_id,
+      appkey: channelParams.appkey || channel.app_key,
+      appsecret: channelParams.appsecret || channel.app_secret,
+      config: {
+        certs: channelConfigJson.certs || {}
+      }
     };
 
     const totalMoney = parseFloat(lockedOrder.real_money || lockedOrder.money || 0);
     if (!(totalMoney > 0)) {
       await connection.rollback();
+      await markTestAutoRefundFailed(lockedOrder.id, '自动退款失败：退款金额无效');
       console.warn(`测试订单自动退款跳过: 金额无效, trade_no=${lockedOrder.trade_no}`);
       return;
     }
@@ -2627,6 +2671,7 @@ async function tryAutoRefundTestOrder(order) {
     if (!refundResult || refundResult.code !== 0) {
       await connection.rollback();
       const refundMsg = refundResult && refundResult.msg ? refundResult.msg : '未知错误';
+      await markTestAutoRefundFailed(lockedOrder.id, `自动退款失败：${refundMsg}`);
       console.warn(`测试订单自动退款失败: trade_no=${lockedOrder.trade_no}, msg=${refundMsg}`);
       return;
     }
@@ -2655,6 +2700,7 @@ async function tryAutoRefundTestOrder(order) {
     try {
       await connection.rollback();
     } catch (rollbackError) {}
+    await markTestAutoRefundFailed(order.id, `自动退款异常：${error.message || '系统异常'}`);
     console.error('测试订单自动退款异常:', error);
   } finally {
     connection.release();
@@ -2791,7 +2837,7 @@ router.get('/check_status', async (req, res) => {
     }
 
     const [orders] = await db.query(
-      'SELECT trade_no, status, refund_status, order_type, param FROM orders WHERE trade_no = ?',
+      'SELECT trade_no, status, refund_status, refund_reason, order_type, param FROM orders WHERE trade_no = ?',
       [trade_no]
     );
 
@@ -2805,14 +2851,18 @@ router.get('/check_status', async (req, res) => {
       return res.status(403).json({ code: 1, msg: '无权查询该订单状态' });
     }
 
-    const refunded = order.status === 2 && parseInt(order.refund_status || 0, 10) === 1;
+    const refundStatus = parseInt(order.refund_status || 0, 10);
+    const refunded = order.status === 2 && refundStatus === 1;
+    const refundFailed = refundStatus === 2;
     // status: 0=待支付 1=已支付 2=已关闭/退款'
     res.json({ 
       code: 0, 
       status: order.status,
-      refund_status: order.refund_status || 0,
+      refund_status: refundStatus,
+      refund_reason: order.refund_reason || '',
       paid: order.status === 1 || refunded,
-      refunded
+      refunded,
+      refund_failed: refundFailed
     });
 
   } catch (error) {
