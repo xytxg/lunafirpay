@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../config/database');
+const autoSettlementService = require('../../utils/autoSettlementService');
 const { requireProviderRamPermission } = require('../auth');
 
 // ==================== 结算管理接口 ====================
@@ -221,6 +222,50 @@ router.post('/settlement/fee-config', requireProviderRamPermission('settings'), 
   } catch (error) {
     console.error('保存结算费率配置错误:', error);
     res.json({ code: -1, msg: '保存失败' });
+  }
+});
+
+// 手动触发批量结算（不依赖 0 点定时）
+router.post('/settlement/manual-batch', requireProviderRamPermission('finance'), async (req, res) => {
+  try {
+    const result = await autoSettlementService.triggerManualBatch();
+
+    if (result.code !== 0) {
+      return res.json({ code: -1, msg: result.msg || '手动批量结算失败' });
+    }
+
+    if (result.skipped) {
+      const reasonMap = {
+        running: '已有结算任务正在执行，请稍后重试',
+        no_options: '请先在结算设置中保存配置',
+        disabled: '请先启用自动结算',
+        not_daily_cycle: '当前自动结算周期不是 D+0/D+1，无法执行批量结算',
+        no_merchants: '暂无可处理的商户'
+      };
+
+      return res.json({
+        code: 0,
+        msg: reasonMap[result.reason] || '本次未触发结算',
+        data: result
+      });
+    }
+
+    const settleCount = Number(result.settleCount || 0);
+    const merchantCount = Number(result.merchantCount || 0);
+    const totalAmount = Number(result.totalAmount || 0).toFixed(2);
+
+    if (settleCount > 0) {
+      return res.json({
+        code: 0,
+        msg: `手动批量结算完成：生成 ${settleCount} 笔，涉及 ${merchantCount} 个商户，总金额 ¥${totalAmount}`,
+        data: result
+      });
+    }
+
+    return res.json({ code: 0, msg: '手动批量结算已执行，本次无可结算金额', data: result });
+  } catch (error) {
+    console.error('手动批量结算错误:', error);
+    res.json({ code: -1, msg: '操作失败' });
   }
 });
 

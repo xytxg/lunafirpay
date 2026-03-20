@@ -63,6 +63,10 @@ class AutoSettlementService {
     return this._run({ trigger: 'realtime', merchantId });
   }
 
+  async triggerManualBatch() {
+    return this._run({ trigger: 'manual' });
+  }
+
   async _tick() {
     const [[dbNow]] = await db.query(
       "SELECT DATE_FORMAT(NOW(), '%H:%i') AS hm, DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS date_key"
@@ -101,6 +105,9 @@ class AutoSettlementService {
         return { code: 0, skipped: true, reason: 'not_realtime_cycle' };
       }
       if (trigger === 'daily' && (cycle < 0 || cycle > 1)) {
+        return { code: 0, skipped: true, reason: 'not_daily_cycle' };
+      }
+      if (trigger === 'manual' && (cycle < 0 || cycle > 1)) {
         return { code: 0, skipped: true, reason: 'not_daily_cycle' };
       }
 
