@@ -2723,6 +2723,7 @@ async function sendDownstreamNotify(order) {
       // 使用事务保护避免重复增加和数据不一致
       const settleAmount = parseFloat(order.money) - parseFloat(order.fee_money || 0);
       let balanceIncreased = false;
+      let balanceAfterIncrease = null;
       if (settleAmount > 0) {
         const connection = await db.getConnection();
         try {
@@ -2739,6 +2740,11 @@ async function sendDownstreamNotify(order) {
               [settleAmount, order.merchant_id]
             );
             await connection.query('UPDATE orders SET balance_added = 1 WHERE id = ?', [order.id]);
+            const [merchantBalanceRows] = await connection.query(
+              'SELECT balance FROM merchants WHERE user_id = ? LIMIT 1',
+              [order.merchant_id]
+            );
+            balanceAfterIncrease = parseFloat(merchantBalanceRows[0]?.balance || 0);
             balanceIncreased = true;
             console.log(`商户余额增加: user_id=${order.merchant_id}, amount=${settleAmount}`);
           }
@@ -2752,6 +2758,19 @@ async function sendDownstreamNotify(order) {
         }
       }
 
+      if (balanceIncreased) {
+        try {
+          await telegramService.notifyBalance(order.merchant_id, 'merchant', {
+            type: 'income',
+            amount: settleAmount,
+            balance: balanceAfterIncrease,
+            reason: `订单收款入账: ${order.trade_no}`
+          });
+        } catch (balanceNotifyError) {
+          console.error('发送余额变动通知失败:', balanceNotifyError);
+        }
+      }
+
       // 实时自动结算：仅在本次确实增加了余额后触发
       if (balanceIncreased) {
         try {
@@ -2761,22 +2780,7 @@ async function sendDownstreamNotify(order) {
         }
       }
 
-      // 发送 Telegram 通知给用户（订单交易通知）
-      try {
-        telegramService.notifyPayment({
-          trade_no: order.trade_no,
-          out_trade_no: order.out_trade_no,
-          money: order.money,
-          real_money: order.real_money || order.money,
-          type: order.pay_type,
-          name: order.name,
-          status: 2,
-          merchant_id: order.merchant_id,
-          pid: merchant.pid
-        });
-      } catch (tgError) {
-        console.error('发送 Telegram 用户通知失败:', tgError);
-      }
+      let paymentNotifyStatus = order.notify_url ? 1 : 2;
 
       if (order.notify_url) {
         const notifyOrderName = await systemConfig.getConfig('notify_order_name', '0');
@@ -2789,12 +2793,30 @@ async function sendDownstreamNotify(order) {
         console.log('发送商户通知:', order.notify_url, notifyParams);
 
         const success = await sendNotify(order.notify_url, notifyParams);
+        paymentNotifyStatus = success ? 2 : 1;
         console.log('商户通知结果:', success ? '成功' : '失败');
 
         await db.query(
           'UPDATE orders SET notify_status = ?, notify_count = notify_count + 1, notify_time = NOW() WHERE id = ?',
           [success ? 1 : 2, order.id]
         );
+      }
+
+      // 发送 Telegram 通知给用户（订单交易通知）
+      try {
+        telegramService.notifyPayment({
+          trade_no: order.trade_no,
+          out_trade_no: order.out_trade_no,
+          money: order.money,
+          real_money: order.real_money || order.money,
+          type: order.pay_type,
+          name: order.name,
+          status: paymentNotifyStatus,
+          merchant_id: order.merchant_id,
+          pid: merchant.pid
+        });
+      } catch (tgError) {
+        console.error('发送 Telegram 用户通知失败:', tgError);
       }
     }
 

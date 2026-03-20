@@ -359,7 +359,8 @@ async function handleStatus(chatId, fromUser) {
     );
     
     if (bindings.length === 0) {
-      await bot.sendMessage(chatId, '您当前没有绑定任何账户\n\n请在 LunaFir 平台的个人设置中获取绑定链接');
+      const siteName = await systemConfig.getSiteName();
+      await bot.sendMessage(chatId, `您当前没有绑定任何账户\n\n请在 ${siteName} 平台的个人设置中获取绑定链接`);
       return;
     }
     
@@ -726,7 +727,7 @@ async function showPidSettings(chatId, bindingId, telegramId, messageId = null) 
     const [pids] = await db.query(
       `SELECT m.pid, m.status 
        FROM merchants m 
-       WHERE m.user_id = ? AND m.status = 'active'
+       WHERE m.user_id = ? AND m.status IN ('active', 'approved')
        ORDER BY m.pid`,
       [binding.user_id]
     );
@@ -1157,28 +1158,33 @@ const authMiddleware = async (req, res, next) => {
       return res.json({ code: -401, msg: '未登录' });
     }
 
-    if (sessionId.startsWith('ram_')) {
-      const [sessions] = await db.query(
-        `SELECT s.user_id, s.user_type, ur.owner_id, ur.owner_type
-         FROM sessions s JOIN user_ram ur ON s.user_id = ur.user_id
-         WHERE s.session_token = ? AND ur.status = 1`,
-        [sessionId]
+    const [sessions] = await db.query(
+      'SELECT user_id, user_type FROM sessions WHERE session_token = ?',
+      [sessionId]
+    );
+    if (sessions.length === 0) {
+      return res.json({ code: -401, msg: '会话无效' });
+    }
+
+    const session = sessions[0];
+    if (session.user_type === 'ram' || sessionId.startsWith('ram_')) {
+      const [ramUsers] = await db.query(
+        'SELECT user_id, owner_id, owner_type FROM user_ram WHERE user_id = ? AND status = 1',
+        [session.user_id]
       );
-      if (sessions.length === 0) {
+      if (ramUsers.length === 0) {
         return res.json({ code: -401, msg: '会话无效' });
       }
+
       req.user = {
-        user_id: sessions[0].owner_id,
-        user_type: sessions[0].owner_type,
+        user_id: ramUsers[0].user_id,
+        user_type: 'ram',
         is_ram: true,
-        ram_user_id: sessions[0].user_id
+        owner_id: ramUsers[0].owner_id,
+        owner_type: ramUsers[0].owner_type
       };
     } else {
-      const [sessions] = await db.query('SELECT user_id, user_type FROM sessions WHERE session_token = ?', [sessionId]);
-      if (sessions.length === 0) {
-        return res.json({ code: -401, msg: '会话无效' });
-      }
-      req.user = { user_id: sessions[0].user_id, user_type: sessions[0].user_type, is_ram: false };
+      req.user = { user_id: session.user_id, user_type: session.user_type, is_ram: false };
     }
     next();
   } catch (err) {

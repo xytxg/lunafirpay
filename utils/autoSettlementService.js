@@ -315,6 +315,17 @@ class AutoSettlementService {
 
       await conn.commit();
 
+      try {
+        await telegramService.notifyBalance(merchantId, 'merchant', {
+          type: 'settlement',
+          amount: settleAmount,
+          balance: newBalance,
+          reason: `自动结算: ${settleNo}`
+        });
+      } catch (balanceNotifyError) {
+        console.error(`[AutoSettlement] 发送余额变动通知失败 merchant=${merchantId}:`, balanceNotifyError.message);
+      }
+
       return {
         created: true,
         settleNo,

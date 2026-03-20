@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../../config/database');
 const autoSettlementService = require('../../utils/autoSettlementService');
+const telegramService = require('../../Telegram');
 const { requireProviderRamPermission } = require('../auth');
 
 // ==================== 结算管理接口 ====================
@@ -356,6 +357,20 @@ router.post('/withdraw/approve', requireProviderRamPermission('finance'), async 
       'UPDATE settle_records SET status = 1, remark = ?, processed_at = NOW(), processed_by = ? WHERE id = ?',
       [remark || '审核通过', user_id, id]
     );
+
+    try {
+      await telegramService.notifySettlementStatus({
+        settle_no: record.settle_no,
+        amount: record.amount,
+        real_amount: record.real_amount,
+        status: 1,
+        remark: remark || '审核通过',
+        user_id: record.merchant_id,
+        user_type: 'merchant'
+      });
+    } catch (notifyError) {
+      console.error('发送提现审核通过 Telegram 通知失败:', notifyError.message);
+    }
     
     res.json({ code: 0, msg: '已审核通过' });
   } catch (error) {
@@ -433,6 +448,32 @@ router.post('/withdraw/reject', requireProviderRamPermission('finance'), async (
       );
       
       await conn.commit();
+
+      try {
+        await telegramService.notifySettlementStatus({
+          settle_no: record.settle_no,
+          amount: record.amount,
+          real_amount: record.real_amount,
+          status: 3,
+          remark,
+          user_id: record.merchant_id,
+          user_type: 'merchant'
+        });
+      } catch (notifyError) {
+        console.error('发送提现拒绝 Telegram 通知失败:', notifyError.message);
+      }
+
+      try {
+        await telegramService.notifyBalance(merchantId, 'merchant', {
+          type: 'unfreeze',
+          amount: refundAmount,
+          balance: newBalance,
+          reason: `提现拒绝退回: ${remark}`
+        });
+      } catch (balanceNotifyError) {
+        console.error('发送提现拒绝余额通知失败:', balanceNotifyError.message);
+      }
+
       res.json({ code: 0, msg: '已拒绝，余额已退回' });
     } catch (txError) {
       await conn.rollback();
@@ -477,6 +518,21 @@ router.post('/withdraw/batch-approve', requireProviderRamPermission('finance'), 
           'UPDATE settle_records SET status = 1, remark = ?, processed_at = NOW(), processed_by = ? WHERE id = ?',
           ['批量审核通过', user_id, id]
         );
+
+        try {
+          const record = records[0];
+          await telegramService.notifySettlementStatus({
+            settle_no: record.settle_no,
+            amount: record.amount,
+            real_amount: record.real_amount,
+            status: 1,
+            remark: '批量审核通过',
+            user_id: record.merchant_id,
+            user_type: 'merchant'
+          });
+        } catch (notifyError) {
+          console.error(`批量审核通知失败 id=${id}:`, notifyError.message);
+        }
         
         successCount++;
       } catch (err) {
