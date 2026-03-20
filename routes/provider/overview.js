@@ -8,18 +8,23 @@ const db = require('../../config/database');
 // 获取管理后台概览数据
 router.get('/overview', async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
-    
     // 今日数据（单服务商模式，不按 provider_id 过滤）
     const [[todayStats]] = await db.query(
       `SELECT 
-        COUNT(*) as order_count,
-        COALESCE(SUM(CASE WHEN status = 1 THEN money ELSE 0 END), 0) as total_money,
-        COALESCE(SUM(CASE WHEN status = 1 THEN fee_money ELSE 0 END), 0) as fee_money,
-        COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) as success_count
+        COALESCE(SUM(CASE 
+          WHEN created_at >= CURDATE() AND created_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN 1 ELSE 0 END), 0) as order_count,
+        COALESCE(SUM(CASE 
+          WHEN status = 1 AND paid_at >= CURDATE() AND paid_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN money ELSE 0 END), 0) as total_money,
+        COALESCE(SUM(CASE 
+          WHEN status = 1 AND paid_at >= CURDATE() AND paid_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN fee_money ELSE 0 END), 0) as fee_money,
+        COALESCE(SUM(CASE 
+          WHEN status = 1 AND paid_at >= CURDATE() AND paid_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN 1 ELSE 0 END), 0) as success_count
        FROM orders 
-       WHERE DATE(created_at) = ?`,
-      [today]
+      `
     );
 
     // 总数据（包含通道成本计算）

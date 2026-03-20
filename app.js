@@ -41,6 +41,7 @@ const telegramService = require('./Telegram');
 
 // 邮件发送服务
 const emailService = require('./utils/emailService');
+const autoSettlementService = require('./utils/autoSettlementService');
 
 const app = express();
 const distPath = path.join(__dirname, 'dist');
@@ -179,6 +180,9 @@ emailService.start().then(() => {
   console.error('邮件发送服务启动失败:', err);
 });
 
+// 启动自动结算调度服务
+autoSettlementService.start();
+
 // 启动服务器
 const PORT = 3000;
 
@@ -204,5 +208,6 @@ process.on('SIGINT', () => {
   pluginLoader.stopWatching();
   telegramService.stop();
   emailService.stop();
+  autoSettlementService.stop();
   process.exit(0);
 });

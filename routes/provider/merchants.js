@@ -453,4 +453,83 @@ router.post('/merchants/update', requireProviderRamPermission('merchant'), async
   }
 });
 
+// 管理员调整商户余额（正数增加，负数减少）
+router.post('/merchants/adjust-balance', requireProviderRamPermission('finance'), async (req, res) => {
+  const { user_id: adminUserId } = req.user;
+  const { merchantId, amount } = req.body || {};
+
+  const targetMerchantId = parseInt(merchantId, 10);
+  const changeAmount = Math.round(parseFloat(amount) * 100) / 100;
+
+  if (!targetMerchantId || Number.isNaN(targetMerchantId)) {
+    return res.json({ code: -1, msg: '缺少商户ID' });
+  }
+
+  if (!Number.isFinite(changeAmount) || changeAmount === 0) {
+    return res.json({ code: -1, msg: '请输入非0的调整金额' });
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [merchantRows] = await conn.query(
+      `SELECT m.user_id, m.balance, u.is_admin
+       FROM merchants m
+       JOIN users u ON u.id = m.user_id
+       WHERE m.user_id = ?
+       FOR UPDATE`,
+      [targetMerchantId]
+    );
+
+    if (merchantRows.length === 0 || merchantRows[0].is_admin === 1) {
+      await conn.rollback();
+      return res.json({ code: -1, msg: '商户不存在' });
+    }
+
+    const beforeBalance = Math.round(parseFloat(merchantRows[0].balance || 0) * 100) / 100;
+    const afterBalance = Math.round((beforeBalance + changeAmount) * 100) / 100;
+    const actionText = changeAmount > 0 ? '管理员增加余额' : '管理员减少余额';
+    const relatedNo = `ADMIN_BAL_${Date.now()}_${targetMerchantId}`;
+
+    await conn.query(
+      'UPDATE merchants SET balance = ? WHERE user_id = ?',
+      [afterBalance, targetMerchantId]
+    );
+
+    await conn.query(
+      `INSERT INTO merchant_balance_logs
+        (merchant_id, type, amount, before_balance, after_balance, related_no, remark)
+       VALUES (?, 'adjust', ?, ?, ?, ?, ?)`,
+      [
+        targetMerchantId,
+        changeAmount,
+        beforeBalance,
+        afterBalance,
+        relatedNo,
+        `${actionText}（管理员ID:${adminUserId}）`
+      ]
+    );
+
+    await conn.commit();
+
+    res.json({
+      code: 0,
+      msg: `${actionText}成功`,
+      data: {
+        merchantId: targetMerchantId,
+        amount: changeAmount,
+        beforeBalance,
+        afterBalance
+      }
+    });
+  } catch (error) {
+    await conn.rollback();
+    console.error('调整商户余额错误:', error);
+    res.json({ code: -1, msg: '调整余额失败' });
+  } finally {
+    conn.release();
+  }
+});
+
 module.exports = router;

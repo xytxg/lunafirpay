@@ -26,17 +26,20 @@ router.get('/overview', async (req, res) => {
     const { user_id } = req.user;
     const merchant = req.merchant;
     
-    // 获取今日数据
-    const today = new Date().toISOString().split('T')[0];
-    
     const [[todayStats]] = await db.query(
       `SELECT 
-        COUNT(*) as order_count,
-        COALESCE(SUM(CASE WHEN status = 1 THEN money ELSE 0 END), 0) as total_money,
-        COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) as success_count
+        COALESCE(SUM(CASE 
+          WHEN created_at >= CURDATE() AND created_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN 1 ELSE 0 END), 0) as order_count,
+        COALESCE(SUM(CASE 
+          WHEN status = 1 AND paid_at >= CURDATE() AND paid_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN money ELSE 0 END), 0) as total_money,
+        COALESCE(SUM(CASE 
+          WHEN status = 1 AND paid_at >= CURDATE() AND paid_at < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+          THEN 1 ELSE 0 END), 0) as success_count
        FROM orders 
-       WHERE merchant_id = ? AND DATE(created_at) = ?`,
-      [user_id, today]
+       WHERE merchant_id = ?`,
+      [user_id]
     );
 
     // 获取总数据

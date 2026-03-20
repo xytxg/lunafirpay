@@ -15,6 +15,7 @@ const config = yaml.load(fs.readFileSync(configPath, 'utf8'));
 
 // 引入系统配置服务（从数据库获取 baseUrl, siteName 等）
 const systemConfig = require('../utils/systemConfig');
+const autoSettlementService = require('../utils/autoSettlementService');
 
 // ==================== 身份证验证函数 ====================
 
@@ -2721,6 +2722,7 @@ async function sendDownstreamNotify(order) {
       // 增加商户余额（订单金额 - 手续费）
       // 使用事务保护避免重复增加和数据不一致
       const settleAmount = parseFloat(order.money) - parseFloat(order.fee_money || 0);
+      let balanceIncreased = false;
       if (settleAmount > 0) {
         const connection = await db.getConnection();
         try {
@@ -2737,6 +2739,7 @@ async function sendDownstreamNotify(order) {
               [settleAmount, order.merchant_id]
             );
             await connection.query('UPDATE orders SET balance_added = 1 WHERE id = ?', [order.id]);
+            balanceIncreased = true;
             console.log(`商户余额增加: user_id=${order.merchant_id}, amount=${settleAmount}`);
           }
 
@@ -2746,6 +2749,15 @@ async function sendDownstreamNotify(order) {
           console.error('余额增加事务失败:', txError);
         } finally {
           connection.release();
+        }
+      }
+
+      // 实时自动结算：仅在本次确实增加了余额后触发
+      if (balanceIncreased) {
+        try {
+          await autoSettlementService.triggerRealtime(order.merchant_id);
+        } catch (autoSettleError) {
+          console.error('实时自动结算触发失败:', autoSettleError);
         }
       }
 

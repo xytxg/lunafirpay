@@ -225,15 +225,12 @@ router.get('/withdraw/info', requireMerchantRamPermission('finance'), async (req
     // settle_cycle: -1=实时, 0=D+0, 1=D+1
     let frozenAmount = 0;
     if (options.settle_cycle === 1 || options.settle_cycle === 0) {
-      // D+1 和 D+0: 今天0点之后的收入不可提
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayStart = today.toISOString().slice(0, 19).replace('T', ' ');
+      // D+1 和 D+0: 今日收入冻结（按数据库本地日期计算）
       const [orderRows] = await db.query(`
         SELECT COALESCE(SUM(real_money - fee_money), 0) as frozen 
         FROM orders 
-        WHERE merchant_id = ? AND status = 1 AND paid_at >= ?
-      `, [user_id, todayStart]);
+        WHERE merchant_id = ? AND status = 1 AND paid_at >= CURDATE()
+      `, [user_id]);
       frozenAmount = parseFloat(orderRows[0].frozen || 0);
     }
     // settle_cycle === -1 (实时): frozenAmount = 0，收入即可提现
@@ -337,14 +334,11 @@ router.post('/withdraw/apply', requireMerchantRamPermission('finance'), async (r
     // 计算冻结金额（T+1结算模式下，今日收入冻结）
     let frozenAmount = 0;
     if (options.settle_cycle === 1 || options.settle_cycle === 0) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayStart = today.toISOString().slice(0, 19).replace('T', ' ');
       const [orderRows] = await db.query(`
         SELECT COALESCE(SUM(real_money - fee_money), 0) as frozen 
         FROM orders 
-        WHERE merchant_id = ? AND status = 1 AND paid_at >= ?
-      `, [user_id, todayStart]);
+        WHERE merchant_id = ? AND status = 1 AND paid_at >= CURDATE()
+      `, [user_id]);
       frozenAmount = parseFloat(orderRows[0].frozen || 0);
     }
     
