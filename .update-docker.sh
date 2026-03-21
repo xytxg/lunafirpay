@@ -34,35 +34,10 @@ if ! docker compose version >/dev/null 2>&1; then
   fi
 fi
 
-hash_file() {
-  local f="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$f" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$f" | awk '{print $1}'
-  elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 "$f" | awk '{print $NF}'
-  else
-    echo "[ERROR] 无可用哈希命令（sha256sum/shasum/openssl）"
-    exit 1
-  fi
-}
-
-read_db_hash() {
-  docker exec "$DB_CONTAINER" sh -c \
-    "mysql -uroot -p\"$DB_ROOT_PASSWORD\" -Nse \"SELECT config_value FROM system_config WHERE config_key='docker_init_sql_sha256' LIMIT 1\" $DB_NAME" 2>/dev/null || true
-}
-
-write_db_hash() {
-  local hash="$1"
-  docker exec "$DB_CONTAINER" sh -c \
-    "mysql -uroot -p\"$DB_ROOT_PASSWORD\" -Nse \"INSERT INTO system_config (config_key, config_value, description) VALUES ('docker_init_sql_sha256', '$hash', 'docker initialization.sql sha256') ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), description=VALUES(description), updated_at=NOW()\" $DB_NAME"
-}
-
 apply_db_migration() {
-  echo "[INFO] 检测到 initialization.sql 变更，开始执行数据库增量迁移..."
+  echo "[INFO] 直接执行 initialization.sql ..."
   docker exec -i "$DB_CONTAINER" sh -c \
-    "mysql -uroot -p\"$DB_ROOT_PASSWORD\" $DB_NAME" < "$INIT_SQL"
+    "mysql --default-character-set=utf8mb4 -uroot -p\"$DB_ROOT_PASSWORD\" $DB_NAME" < "$INIT_SQL"
   echo "[INFO] 数据库迁移执行完成"
 }
 
@@ -129,18 +104,7 @@ main() {
     fi
   fi
 
-  local local_hash
-  local_hash="$(hash_file "$INIT_SQL")"
-
-  local db_hash
-  db_hash="$(read_db_hash)"
-
-  if [[ "$local_hash" != "$db_hash" ]]; then
-    apply_db_migration
-    write_db_hash "$local_hash"
-  else
-    echo "[INFO] initialization.sql 未变化，跳过数据库迁移"
-  fi
+  apply_db_migration
 
   echo "[INFO] 启动新版本 app 容器"
   $compose_cmd -f "$COMPOSE_FILE" up -d --no-deps app
@@ -148,7 +112,6 @@ main() {
   echo "[INFO] 升级完成"
   echo "       旧版本时间戳: $old_ts"
   echo "       新版本时间戳: $built_ts"
-  echo "       init.sql hash: $local_hash"
 }
 
 main "$@"

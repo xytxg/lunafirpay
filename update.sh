@@ -59,20 +59,6 @@ yaml_db_value() {
   ' "$CONFIG_FILE"
 }
 
-hash_file() {
-  local f="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$f" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$f" | awk '{print $1}'
-  elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 "$f" | awk '{print $NF}'
-  else
-    echo "[ERROR] 无可用哈希命令（sha256sum/shasum/openssl）"
-    exit 1
-  fi
-}
-
 DB_HOST="$(yaml_db_value host)"
 DB_PORT="$(yaml_db_value port)"
 DB_USER="$(yaml_db_value user)"
@@ -123,20 +109,9 @@ fi
 echo "[INFO] 安装依赖..."
 npm install --omit=dev
 
-LOCAL_HASH="$(hash_file "$INIT_SQL")"
-
-DB_HASH="$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -Nse "SELECT config_value FROM system_config WHERE config_key='baremetal_init_sql_sha256' LIMIT 1" "$DB_NAME" 2>/dev/null || true)"
-
-if [[ "$LOCAL_HASH" != "$DB_HASH" ]]; then
-  echo "[INFO] 检测到 initialization.sql 变化，开始平滑迁移数据库..."
-  mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$DB_NAME" < "$INIT_SQL"
-  mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e \
-    "INSERT INTO system_config (config_key, config_value, description) VALUES ('baremetal_init_sql_sha256', '$LOCAL_HASH', 'baremetal initialization.sql sha256') ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), description=VALUES(description), updated_at=NOW()" \
-    "$DB_NAME"
-  echo "[INFO] 数据库迁移完成"
-else
-  echo "[INFO] initialization.sql 未变化，跳过数据库迁移"
-fi
+echo "[INFO] 直接执行 initialization.sql ..."
+mysql --default-character-set=utf8mb4 -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$DB_NAME" < "$INIT_SQL"
+echo "[INFO] 数据库迁移完成"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q "^${SERVICE_NAME}\.service"; then
   echo "[INFO] 重启 systemd 服务: $SERVICE_NAME"
@@ -152,4 +127,4 @@ fi
 
 echo "[INFO] 更新完成"
 echo "       当前提交: $(git rev-parse --short HEAD)"
-echo "       SQL hash : $LOCAL_HASH"
+echo "       SQL 文件 : $INIT_SQL"

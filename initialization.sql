@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_username` (`username`),
   KEY `idx_email` (`email`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
 -- RAM子账户表
 CREATE TABLE IF NOT EXISTS `user_ram` (
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS `user_ram` (
   UNIQUE KEY `user_id` (`user_id`),
   KEY `idx_owner` (`owner_id`,`owner_type`),
   KEY `idx_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='RAM子账户表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='RAM子账户表';
 
 -- 会话表（支持RAM用户的字符串ID）
 CREATE TABLE IF NOT EXISTS `sessions` (
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS `sessions` (
   PRIMARY KEY (`id`),
   KEY `idx_session_token` (`session_token`),
   KEY `idx_user_id` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='会话表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话表';
 
 -- 验证码表
 CREATE TABLE IF NOT EXISTS `verification_codes` (
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `verification_codes` (
   PRIMARY KEY (`id`),
   KEY `idx_email_type` (`email`,`type`),
   KEY `idx_expires` (`expires_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== 商户相关表 ====================
 
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS `merchants` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_user_id` (`user_id`),
   UNIQUE KEY `pid` (`pid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商户配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商户配置表';
 
 -- 商户域名白名单表
 CREATE TABLE IF NOT EXISTS `merchant_domains` (
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS `merchant_domains` (
   UNIQUE KEY `uk_merchant_domain` (`merchant_id`,`domain`),
   KEY `idx_merchant` (`merchant_id`),
   KEY `idx_domain` (`domain`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 商户结算账户表
 CREATE TABLE IF NOT EXISTS `merchant_settlements` (
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS `merchant_settlements` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_merchant_provider` (`merchant_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 商户余额变动日志
 CREATE TABLE IF NOT EXISTS `merchant_balance_logs` (
@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS `merchant_balance_logs` (
   KEY `idx_merchant` (`merchant_id`),
   KEY `idx_type` (`type`),
   KEY `idx_created` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商户余额变动日志';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商户余额变动日志';
 
 -- 商户公告表（管理员维护，商户中心展示）
 CREATE TABLE IF NOT EXISTS `merchant_announcements` (
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS `merchant_announcements` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_enabled_sort` (`is_enabled`,`sort_order`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商户公告表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商户公告表';
 
 -- ==================== 订单相关表 ====================
 
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   KEY `idx_out_trade_no` (`out_trade_no`),
   KEY `idx_status` (`status`),
   KEY `idx_created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='订单表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';
 
 -- ==================== 支付通道相关表 ====================
 
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS `provider_channels` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='支付通道配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付通道配置表';
 
 -- 通道轮询组表
 CREATE TABLE IF NOT EXISTS `channel_groups` (
@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS `channel_groups` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_type` (`pay_type_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='通道轮询组表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='通道轮询组表';
 
 -- 支付组配置表
 CREATE TABLE IF NOT EXISTS `provider_pay_groups` (
@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS `provider_pay_groups` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_default` (`is_default`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='支付组配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付组配置表';
 
 -- ==================== 结算相关表 ====================
 
@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS `settlement_options` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 结算/提现记录表
 CREATE TABLE IF NOT EXISTS `settle_records` (
@@ -320,7 +320,7 @@ CREATE TABLE IF NOT EXISTS `settle_records` (
   KEY `idx_merchant_id` (`merchant_id`),
   KEY `idx_status` (`status`),
   KEY `idx_created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ==================== Telegram 相关表 ====================
 
@@ -343,7 +343,7 @@ CREATE TABLE IF NOT EXISTS `telegram_bindings` (
   UNIQUE KEY `uk_user` (`user_id`,`user_type`),
   KEY `idx_telegram_id` (`telegram_id`),
   KEY `idx_chat_id` (`chat_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Telegram绑定表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Telegram绑定表';
 
 -- Telegram绑定Token表
 CREATE TABLE IF NOT EXISTS `telegram_bind_tokens` (
@@ -357,7 +357,7 @@ CREATE TABLE IF NOT EXISTS `telegram_bind_tokens` (
   UNIQUE KEY `uk_token` (`token`),
   KEY `idx_user` (`user_id`,`user_type`),
   KEY `idx_expires` (`expires_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Telegram绑定Token表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Telegram绑定Token表';
 
 -- Telegram PID级别通知设置
 CREATE TABLE IF NOT EXISTS `telegram_pid_settings` (
@@ -369,7 +369,7 @@ CREATE TABLE IF NOT EXISTS `telegram_pid_settings` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_binding_pid` (`binding_id`,`pid`),
   KEY `idx_pid` (`pid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Telegram PID级别通知设置';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Telegram PID级别通知设置';
 
 -- ==================== 系统配置表 ====================
 
@@ -382,7 +382,7 @@ CREATE TABLE IF NOT EXISTS `system_config` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `config_key` (`config_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS=1;
 
@@ -458,6 +458,22 @@ SET @preparedStatement = (SELECT IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
   CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER `created_at`'),
   'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 merchant_announcements 表补索引（如果不存在）
+SET @indexname = 'idx_enabled_sort';
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = @tablename
+      AND INDEX_NAME = @indexname
+  ),
+  'SELECT 1',
+  CONCAT('ALTER TABLE `', @tablename, '` ADD INDEX `', @indexname, '` (`is_enabled`, `sort_order`)')
 ));
 PREPARE stmt FROM @preparedStatement;
 EXECUTE stmt;
