@@ -98,6 +98,73 @@ docker compose up -d --build
 
 > `down -v` 会删除数据库数据，请先备份。
 
+#### 如何更新（Docker）
+
+适用场景：你使用 `docker compose` 部署了 `lunafirpay-app` + `lunafirpay-db`。
+
+1. 进入目录并赋予执行权限（首次执行时）
+
+```bash
+cd server
+chmod +x .update-docker.sh
+```
+
+2. 执行更新
+
+```bash
+./.update-docker.sh
+```
+
+3. 如果你的数据库 root 密码不是默认值，使用下面命令
+
+```bash
+DB_ROOT_PASSWORD=你的root密码 DB_NAME=lunafirpay ./.update-docker.sh
+```
+
+4. 更新完成后检查容器状态
+
+```bash
+docker compose ps
+docker logs --tail 100 lunafirpay-app
+```
+
+说明：
+
+- 脚本会自动判断镜像时间戳版本（新版本更大才升级）。
+- 脚本会自动对比 `initialization.sql` 的哈希，只有变更时才执行数据库迁移。
+- 脚本不会执行 `down -v`，不会主动删除数据库卷数据。
+
+#### 如何更新（非 Docker，推荐生产）
+
+适用场景：你是手动部署（node app.js / systemd / pm2）。
+
+1. 进入目录并赋予执行权限（首次执行时）
+
+```bash
+cd server
+chmod +x update.sh
+```
+
+2. 执行更新
+
+```bash
+./update.sh
+```
+
+3. 常见可选参数
+
+```bash
+GIT_REF=origin/main SERVICE_NAME=lunafirpay ./update.sh
+```
+
+说明：
+
+- 脚本会从 Git 拉取并切换到目标提交。
+- 自动保留本地 `config.yaml`，避免更新覆盖运行配置。
+- 自动处理本地未提交改动（stash）以避免更新冲突。
+- 自动对比 `initialization.sql` 哈希并按需执行平滑数据库迁移。
+- 最后自动重启服务（systemd / pm2 / nohup）。
+
 ### 使用官方自动构建的 Docker 镜像
 
 本项目每次推送到 main 分支或发布新标签时，都会自动构建并推送 Docker 镜像到 GitHub Container Registry（GHCR）
