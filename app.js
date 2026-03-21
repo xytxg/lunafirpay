@@ -30,11 +30,13 @@ const providerRam = require('./routes/provider/ram');
 const providerSettlement = require('./routes/provider/settlement');
 const providerDomains = require('./routes/provider/domains');
 const providerSystem = require('./routes/provider/system');
+const providerAnnouncements = require('./routes/provider/announcements');
 
 const payRoutes = require('./routes/pay');
 const certRoutes = require('./routes/cert');
 const payGroupRoutes = require('./routes/payGroup');
 const verificationRoutes = require('./routes/verification');
+const merchantAnnouncements = require('./routes/merchant/announcements');
 
 // Telegram 通知服务
 const telegramService = require('./Telegram');
@@ -91,6 +93,7 @@ app.use('/api/merchant', merchantAuthMiddleware, merchantProfile);
 app.use('/api/merchant', merchantAuthMiddleware, merchantRam);
 app.use('/api/merchant', merchantAuthMiddleware, merchantSettlement);
 app.use('/api/merchant', merchantAuthMiddleware, merchantServices);
+app.use('/api/merchant', merchantAuthMiddleware, merchantAnnouncements);
 
 // Provider（管理员）路由（聚合拆分模块）
 app.use('/api/admin', providerAuthMiddleware, providerOverview);
@@ -102,6 +105,7 @@ app.use('/api/admin', providerAuthMiddleware, providerRam);
 app.use('/api/admin', providerAuthMiddleware, providerSettlement);
 app.use('/api/admin', providerAuthMiddleware, providerDomains);
 app.use('/api/admin', providerAuthMiddleware, providerSystem);
+app.use('/api/admin', providerAuthMiddleware, providerAnnouncements);
 
 app.use('/api/pay', payRoutes);
 app.use('/api/cert', certRoutes);

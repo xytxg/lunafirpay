@@ -152,6 +152,19 @@ CREATE TABLE IF NOT EXISTS `merchant_balance_logs` (
   KEY `idx_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商户余额变动日志';
 
+-- 商户公告表（管理员维护，商户中心展示）
+CREATE TABLE IF NOT EXISTS `merchant_announcements` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `title` varchar(200) NOT NULL COMMENT '公告标题',
+  `content` text NOT NULL COMMENT '公告内容',
+  `sort_order` int NOT NULL DEFAULT '0' COMMENT '优先级，越大越靠前',
+  `is_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否显示：1显示 0隐藏',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_enabled_sort` (`is_enabled`,`sort_order`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='商户公告表';
+
 -- ==================== 订单相关表 ====================
 
 -- 订单表
@@ -384,6 +397,69 @@ SET @sql = (SELECT IF(
   'SELECT 1'
 ));
 PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- merchant_announcements 表增量补列（存在则跳过）
+SET @tablename = 'merchant_announcements';
+
+SET @columnname = 'title';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `title` VARCHAR(200) NOT NULL COMMENT ''公告标题'' AFTER `id`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @columnname = 'content';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `content` TEXT NOT NULL COMMENT ''公告内容'' AFTER `title`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @columnname = 'sort_order';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `sort_order` INT NOT NULL DEFAULT 0 COMMENT ''优先级，越大越靠前'' AFTER `content`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @columnname = 'is_enabled';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `is_enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT ''是否显示'' AFTER `sort_order`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @columnname = 'created_at';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP AFTER `is_enabled`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @columnname = 'updated_at';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER `created_at`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
