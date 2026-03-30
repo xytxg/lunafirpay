@@ -13,7 +13,13 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
     const { page = 1, pageSize = 20, status, startDate, endDate, merchantId, tradeNo } = req.query;
     
     // 单服务商模式，不按 provider_id 过滤
-    let sql = `SELECT o.id, o.trade_no, o.out_trade_no, o.merchant_id, o.pay_type, o.name,
+    let sql = `SELECT o.id, o.trade_no, o.out_trade_no, o.merchant_id,
+               CASE
+                 WHEN o.order_type = 'test' THEN '测试支付'
+                 WHEN o.merchant_id IS NULL THEN '-'
+                 ELSE CAST(o.merchant_id AS CHAR)
+               END AS merchant_display,
+               o.pay_type, o.name,
                o.money, o.fee_money as fee, o.notify_url, o.return_url,
                o.status, o.created_at, o.paid_at, 
                o.notify_status, o.notify_count, o.notify_time, o.merchant_confirm,
