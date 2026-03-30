@@ -1393,18 +1393,13 @@ router.post('/test/create', async (req, res) => {
       return res.json({ code: 1, msg: `金额不能超过 ${testRuntime.maxAmount.toFixed(2)} 元` });
     }
 
-    const [users] = await db.query('SELECT id FROM users WHERE id = ? LIMIT 1', [1]);
-    if (users.length === 0) {
-      return res.json({ code: 1, msg: '管理员账户不存在，无法创建测试订单' });
-    }
-
-    const [merchants] = await db.query(
-      'SELECT fee_rate as merchant_fee_rate, fee_rates as merchant_fee_rates, fee_payer, pay_group_id FROM merchants WHERE user_id = ? LIMIT 1',
-      [1]
-    );
-    const merchantForFee = merchants[0]
-      ? { ...merchants[0], pay_group_id: testRuntime.payGroupId }
-      : { pay_group_id: testRuntime.payGroupId };
+    // 测试支付不绑定真实商户，费率仅按测试支付组计算
+    const merchantForFee = {
+      merchant_fee_rate: null,
+      merchant_fee_rates: null,
+      fee_payer: 'merchant',
+      pay_group_id: testRuntime.payGroupId
+    };
 
     const feeRate = await getMerchantFeeRate(merchantForFee, pay_type);
     const feePayer = merchantForFee.fee_payer || 'merchant';
@@ -1417,7 +1412,7 @@ router.post('/test/create', async (req, res) => {
     const returnUrl = `${baseUrl}/test-pay?ok=1&trade_no=${tradeNo}&visitor_id=${encodeURIComponent(visitorId)}&visitor_sig=${visitorSig}`;
 
     const orderResult = await createOrder({
-      merchantId: 1,
+      merchantId: null,
       channelId: null,
       tradeNo,
       outTradeNo: tradeNo,
@@ -1440,7 +1435,8 @@ router.post('/test/create', async (req, res) => {
     const orderParam = orderRows.length > 0 ? parseOrderParam(orderRows[0].param) : {};
     orderParam.test_pay = {
       visitor_id: visitorId,
-      signed_at: Date.now()
+      signed_at: Date.now(),
+      marker: 'test_payment'
     };
     await db.query('UPDATE orders SET param = ? WHERE id = ?', [JSON.stringify(orderParam), orderResult.orderId]);
 

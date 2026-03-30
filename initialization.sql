@@ -413,6 +413,23 @@ PREPARE stmt FROM @preparedStatement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- 修复 orders.merchant_id 约束：旧库若为 NOT NULL，则自动改为可空（不清历史数据）
+SET @sql = (SELECT IF(
+  EXISTS(
+    SELECT 1
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'orders'
+      AND COLUMN_NAME = 'merchant_id'
+      AND IS_NULLABLE = 'NO'
+  ),
+  'ALTER TABLE orders MODIFY COLUMN merchant_id INT DEFAULT NULL',
+  'SELECT 1'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 SET @columnname = 'content';
 SET @preparedStatement = (SELECT IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
