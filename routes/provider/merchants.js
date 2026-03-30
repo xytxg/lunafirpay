@@ -55,10 +55,15 @@ router.get('/merchants', requireProviderRamPermission('merchant'), async (req, r
       params.push(status);
     }
 
-    if (merchantId) {
-      // 支持按顺序ID搜索（m.id 或 m.user_id）
-      sql += ' AND (m.id = ? OR m.user_id = ?)';
-      params.push(parseInt(merchantId), parseInt(merchantId));
+    if (merchantId !== undefined && merchantId !== null && String(merchantId).trim() !== '') {
+      // 仅按商户号（merchants.id）搜索，避免与 users.id 混淆
+      const merchantNo = parseInt(String(merchantId).trim(), 10);
+      if (!Number.isNaN(merchantNo) && merchantNo > 0) {
+        sql += ' AND m.id = ?';
+        params.push(merchantNo);
+      } else {
+        sql += ' AND 1=0';
+      }
     }
 
     if (name) {

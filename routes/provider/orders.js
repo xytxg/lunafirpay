@@ -16,8 +16,9 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
     let sql = `SELECT o.id, o.trade_no, o.out_trade_no, o.merchant_id,
                CASE
                  WHEN o.order_type = 'test' THEN '测试支付'
+                 WHEN m.id IS NOT NULL THEN CAST(m.id AS CHAR)
                  WHEN o.merchant_id IS NULL THEN '-'
-                 ELSE CAST(o.merchant_id AS CHAR)
+                 ELSE '-'
                END AS merchant_display,
                o.pay_type, o.name,
                o.money, o.fee_money as fee, o.notify_url, o.return_url,
@@ -28,6 +29,7 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
                pc.channel_name as channel_name, pc.plugin_name as channel_plugin
                FROM orders o 
                LEFT JOIN users u ON o.merchant_id = u.id 
+               LEFT JOIN merchants m ON o.merchant_id = m.user_id
                LEFT JOIN provider_channels pc ON o.channel_id = pc.id
                WHERE 1=1`;
     const params = [];
@@ -50,9 +52,14 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
       params.push(endDate);
     }
 
-    if (merchantId) {
-      whereConditions += ' AND o.merchant_id = ?';
-      params.push(merchantId);
+    if (merchantId !== undefined && merchantId !== null && String(merchantId).trim() !== '') {
+      const merchantNo = parseInt(String(merchantId).trim(), 10);
+      if (!Number.isNaN(merchantNo) && merchantNo > 0) {
+        whereConditions += ' AND m.id = ?';
+        params.push(merchantNo);
+      } else {
+        whereConditions += ' AND 1=0';
+      }
     }
 
     if (tradeNo) {
@@ -63,13 +70,13 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
     sql += whereConditions;
 
     // 获取总数
-    const countSql = `SELECT COUNT(*) as total FROM orders o WHERE 1=1` + whereConditions;
+    const countSql = `SELECT COUNT(*) as total FROM orders o LEFT JOIN merchants m ON o.merchant_id = m.user_id WHERE 1=1` + whereConditions;
     const [countResult] = await db.query(countSql, params);
     const total = countResult[0].total;
 
     // 获取统计数据（成功订单的金额和手续费）
     const statsSql = `SELECT COALESCE(SUM(o.money), 0) as totalMoney, COALESCE(SUM(o.fee_money), 0) as totalFee 
-                      FROM orders o WHERE o.status = 1` + whereConditions;
+              FROM orders o LEFT JOIN merchants m ON o.merchant_id = m.user_id WHERE o.status = 1` + whereConditions;
     const [statsResult] = await db.query(statsSql, params);
     const totalMoney = statsResult[0].totalMoney || 0;
     const totalFee = statsResult[0].totalFee || 0;
