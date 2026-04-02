@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `trade_no` varchar(30) NOT NULL COMMENT '平台交易号',
   `out_trade_no` varchar(64) NOT NULL COMMENT '商户订单号',
   `merchant_id` int DEFAULT NULL,
+  `pay_group_id_snapshot` int DEFAULT NULL COMMENT '下单时支付组快照ID',
   `channel_id` int DEFAULT NULL COMMENT '通道ID',
   `plugin_name` varchar(50) DEFAULT NULL COMMENT '支付插件名称',
   `pay_type` varchar(20) DEFAULT NULL COMMENT '支付类型',
@@ -583,6 +584,18 @@ SET @columnname = 'ip';
 SET @preparedStatement = (SELECT IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
   CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` varchar(45) DEFAULT NULL COMMENT ''访客IP'' AFTER `client_ip`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表添加 pay_group_id_snapshot 列（如果不存在）
+SET @tablename = 'orders';
+SET @columnname = 'pay_group_id_snapshot';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` int DEFAULT NULL COMMENT ''下单时支付组快照ID'' AFTER `merchant_id`'),
   'SELECT 1'
 ));
 PREPARE stmt FROM @preparedStatement;

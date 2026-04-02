@@ -230,7 +230,12 @@ async function generateUniquePid() {
 }
 
 // 获取支付通道（单服务商模式，不按 provider_id 过滤）
-async function getChannel(type) {
+async function getChannel(type, payGroupId = null, options = {}) {
+  // 指定了支付组时，按支付组配置选通道
+  if (payGroupId) {
+    return selectChannelFromGroup(type, payGroupId, options);
+  }
+
   const [channels] = await db.query(
     `SELECT *, pay_type as type_code, channel_name as type_name,
             min_money as min_amount, max_money as max_amount
@@ -431,6 +436,20 @@ async function getPayGroup(payGroupId = null) {
   return payGroup;
 }
 
+function parsePositiveInt(value) {
+  const parsed = parseInt(value, 10);
+  return !isNaN(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getOrderPayGroupSnapshot(order) {
+  return parsePositiveInt(order?.pay_group_id_snapshot);
+}
+
+async function resolveMerchantPayGroupId(merchant) {
+  const payGroup = await getPayGroup(parsePositiveInt(merchant?.pay_group_id));
+  return payGroup?.id || null;
+}
+
 // 获取支付类型列表（基于支付组 config）（单服务商模式）
 async function getPayTypesByGroups(payGroupId = null) {
   const payGroup = await getPayGroup(payGroupId);
@@ -498,7 +517,7 @@ async function getPayTypesByGroups(payGroupId = null) {
 
 // 创建订单（或复用已存在的未支付订单）
 async function createOrder(data) {
-  const { merchantId, channelId, tradeNo, outTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl, feeRate, feePayer, orderType, cryptoPid, certInfo } = data;
+  const { merchantId, channelId, tradeNo, outTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl, feeRate, feePayer, orderType, cryptoPid, certInfo, payGroupIdSnapshot } = data;
   
   // 检查是否已存在相同商户订单号的未支付订单（status=0）
   const [existingOrders] = await db.query(
@@ -528,9 +547,9 @@ async function createOrder(data) {
   console.log('创建订单:', { tradeNo, money: moneyFloat, feeRate, feeMoney, realMoney, feePayer, orderType, certInfo });
   
   const [result] = await db.query(
-    `INSERT INTO orders (merchant_id, channel_id, trade_no, out_trade_no, pay_type, name, money, real_money, fee_money, fee_payer, client_ip, notify_url, return_url, status, order_type, crypto_pid, cert_info, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NOW())`,
-    [merchantId, channelId, tradeNo, outTradeNo, type, name, moneyFloat, realMoney, feeMoney, feePayer || 'merchant', clientIp, notifyUrl, returnUrl, orderType || 'normal', cryptoPid || null, certInfoJson]
+    `INSERT INTO orders (merchant_id, channel_id, trade_no, out_trade_no, pay_type, name, money, real_money, fee_money, fee_payer, client_ip, notify_url, return_url, status, order_type, crypto_pid, pay_group_id_snapshot, cert_info, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, NOW())`,
+    [merchantId, channelId, tradeNo, outTradeNo, type, name, moneyFloat, realMoney, feeMoney, feePayer || 'merchant', clientIp, notifyUrl, returnUrl, orderType || 'normal', cryptoPid || null, payGroupIdSnapshot || null, certInfoJson]
   );
   return { orderId: result.insertId, tradeNo, isExisting: false };
 }
@@ -736,8 +755,10 @@ router.all('/submit', async (req, res) => {
       return res.status(400).send('签名验证失败');
     }
 
-    // 获取支付通道
-    const channel = await getChannel(type);
+    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
+
+    // 获取支付通道（按商户当前支付组）
+    const channel = await getChannel(type, merchantPayGroupId);
     if (!channel) {
       return res.status(400).send('支付通道不存在或已关闭');
     }
@@ -773,6 +794,7 @@ router.all('/submit', async (req, res) => {
       returnUrl: return_url || '',
       feeRate,
       feePayer,
+      payGroupIdSnapshot: merchantPayGroupId,
       certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
@@ -825,8 +847,10 @@ router.all('/mapi', async (req, res) => {
       return res.json({ code: -1, msg: '签名验证失败' });
     }
 
-    // 获取支付通道
-    const channel = await getChannel(type);
+    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
+
+    // 获取支付通道（按商户当前支付组）
+    const channel = await getChannel(type, merchantPayGroupId);
     if (!channel) {
       return res.json({ code: -1, msg: '支付通道不存在或已关闭' });
     }
@@ -862,6 +886,7 @@ router.all('/mapi', async (req, res) => {
       returnUrl: return_url || '',
       feeRate,
       feePayer,
+      payGroupIdSnapshot: merchantPayGroupId,
       certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
@@ -1020,6 +1045,8 @@ router.all('/create', async (req, res) => {
       return res.json({ code: 1004, msg: '签名验证失败' });
     }
 
+    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
+
     // 获取支付通道
     let channel;
     if (channel_id) {
@@ -1037,7 +1064,7 @@ router.all('/create', async (req, res) => {
       }
       channel = channels[0];
     } else {
-      channel = await getChannel(type);
+      channel = await getChannel(type, merchantPayGroupId);
     }
 
     if (!channel) {
@@ -1075,6 +1102,7 @@ router.all('/create', async (req, res) => {
       returnUrl: return_url || '',
       feeRate,
       feePayer,
+      payGroupIdSnapshot: merchantPayGroupId,
       certInfo  // 买家身份限制信息
     });
     const { orderId, tradeNo } = orderResult;
@@ -1425,7 +1453,8 @@ router.post('/test/create', async (req, res) => {
       returnUrl,
       feeRate,
       feePayer,
-      orderType: 'test'
+      orderType: 'test',
+      payGroupIdSnapshot: testRuntime.payGroupId
     });
 
     const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${orderResult.tradeNo}`;
@@ -1587,6 +1616,9 @@ router.get('/cashier', async (req, res) => {
       if (!forcedGroupId) {
         return res.render('error', { message: '测试支付未配置支付组', code: 'TEST_PAY_GROUP_MISSING', backUrl: '/' });
       }
+    } else {
+      // 新订单优先读取下单时的支付组快照；旧订单为空时保持历史默认行为
+      forcedGroupId = getOrderPayGroupSnapshot(order);
     }
 
     // 获取服务商配置的支付类型列表
@@ -1716,14 +1748,18 @@ router.post('/select_channel', async (req, res) => {
 async function selectChannelFromGroup(payType, payGroupId = null, options = {}) {
   const { minAge = null } = options;
   let payGroup;
+  const requestedPayGroupId = parsePositiveInt(payGroupId);
   
   // 如果传入的 payGroupId，优先使用 
-  if (payGroupId) {
+  if (requestedPayGroupId) {
     const [groups] = await db.query(
       'SELECT * FROM provider_pay_groups WHERE id = ?',
-      [payGroupId]
+      [requestedPayGroupId]
     );
     payGroup = groups[0];
+    if (!payGroup) {
+      console.warn(`[PayGroupFallback] 指定支付组不存在，回退默认组: payType=${payType}, payGroupId=${requestedPayGroupId}`);
+    }
   }
   
   // 如果没有找到，查询默认支付组
@@ -1732,6 +1768,9 @@ async function selectChannelFromGroup(payType, payGroupId = null, options = {}) 
       'SELECT * FROM provider_pay_groups WHERE is_default = 1 LIMIT 1'
     );
     payGroup = payGroups[0];
+    if (payGroup && requestedPayGroupId) {
+      console.warn(`[PayGroupFallback] 已回退到默认支付组: payType=${payType}, defaultGroupId=${payGroup.id}`);
+    }
   }
   
   if (!payGroup) {
@@ -1948,6 +1987,7 @@ router.post('/dopay', async (req, res) => {
       return res.json({ code: 1, msg: '订单状态异常' });
     }
 
+    const snapshotGroupId = getOrderPayGroupSnapshot(order);
     let effectiveGroupId = group_id;
     if (order.order_type === 'test') {
       const testRuntime = await getTestPaymentRuntimeConfig();
@@ -1955,6 +1995,9 @@ router.post('/dopay', async (req, res) => {
         return res.json({ code: 1, msg: '测试支付未配置支付组' });
       }
       effectiveGroupId = testRuntime.payGroupId;
+    } else if (snapshotGroupId) {
+      // 新订单以创建时快照为准，不信任前端传入组ID
+      effectiveGroupId = snapshotGroupId;
     }
 
     let channelConfig;
@@ -3033,6 +3076,8 @@ async function handleSubmit(req, res) {
       return res.status(400).send('签名验证失败');
     }
 
+    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
+
     // 如果指定了type，验证支付通道
     if (type) {
       if (channel_id) {
@@ -3042,7 +3087,7 @@ async function handleSubmit(req, res) {
         );
         channel = channels[0];
       } else {
-        channel = await getChannel(type);
+        channel = await getChannel(type, merchantPayGroupId);
       }
       if (!channel) {
         return res.status(400).send('支付通道不存在或已关闭');
@@ -3084,6 +3129,7 @@ async function handleSubmit(req, res) {
       feePayer,
       orderType: 'normal',
       cryptoPid: null,
+      payGroupIdSnapshot: merchantPayGroupId,
       certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
@@ -3166,6 +3212,8 @@ async function handleMapi(req, res) {
       return res.json({ code: -1, msg: '签名验证失败' });
     }
 
+    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
+
     // 获取支付通道
     let channel = null;
     if (type) {
@@ -3176,7 +3224,7 @@ async function handleMapi(req, res) {
         );
         channel = channels[0];
       } else {
-        channel = await getChannel(type);
+        channel = await getChannel(type, merchantPayGroupId);
       }
       if (!channel) {
         return res.json({ code: -1, msg: '支付通道不存在或已关闭' });
@@ -3218,6 +3266,7 @@ async function handleMapi(req, res) {
       feePayer,
       orderType: 'normal',
       cryptoPid: null,
+      payGroupIdSnapshot: merchantPayGroupId,
       certInfo  // 买家身份限制信息
     });
     const tradeNo = orderResult.tradeNo;
