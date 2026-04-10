@@ -35,6 +35,10 @@
       color: var(--text-primary);
     }
 
+    body.direct-mode {
+      display: none;
+    }
+
     .checkout-shell {
       width: 100%;
       max-width: 960px;
@@ -532,7 +536,7 @@
     }
   </style>
 </head>
-<body>
+<body class="<%= directMode ? 'direct-mode' : '' %>">
   <div class="checkout-shell">
     <div class="checkout-container">
     <!-- 左侧订单信息 -->
@@ -682,6 +686,7 @@
     (function() {
       var selectedType = '<%= order.pay_type || "" %>';
       var autoPayType = '<%= autoPayType || "" %>';
+      var directMode = <%= directMode ? 'true' : 'false' %>;
       var selectedGroupId = '<%= selectedGroupId %>';
       var tradeNo = '<%= order.trade_no %>';
       var testVisitorId = '<%= testVisitorId || "" %>';
@@ -746,6 +751,9 @@
 
       // 显示支付宝H5唤起APP面板
       function showAlipayH5(schemeUrl, money) {
+        if (directMode) {
+          document.body.style.display = 'flex';
+        }
         normalQrcodeWrapper.style.display = 'none';
         alipayH5Wrapper.style.display = 'block';
         
@@ -791,6 +799,9 @@
 
       // 显示普通支付二维码
       function showQrcode(qrcodeUrl, payTypeName, expireTime, isLocked) {
+        if (directMode) {
+          document.body.style.display = 'flex';
+        }
         normalQrcodeWrapper.style.display = 'block';
         qrcodeImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(qrcodeUrl);
         var tipTextEl = document.getElementById('qrcodeTipText');
@@ -974,12 +985,18 @@
               window.location.href = data.pay_url;
             }
           } else {
+            if (directMode) {
+              document.body.style.display = 'flex';
+            }
             alert(data.msg || '支付失败，请稍后重试');
             payBtn.disabled = false;
             payBtn.innerHTML = '<span>支付</span>';
           }
         } catch (e) {
           console.error('Payment Error:', e);
+          if (directMode) {
+            document.body.style.display = 'flex';
+          }
           alert('网络错误或数据解析失败，请稍后重试');
           payBtn.disabled = false;
           payBtn.innerHTML = '<span>支付</span>';
@@ -1007,13 +1024,11 @@
             triggerPay(true);
           }
         }, 300);
-      } else if (autoPayType) {
+      } else if (directMode && autoPayType) {
         selectedType = autoPayType;
         document.querySelectorAll('.payment-method').forEach(function(item) {
           item.classList.toggle('active', item.dataset.type === autoPayType);
         });
-
-        // 传入支付方式时直接拉起支付，不展示“处理中”转圈
         setTimeout(function() {
           if (payBtn) {
             triggerPay(true);

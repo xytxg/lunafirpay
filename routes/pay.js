@@ -840,8 +840,8 @@ router.all('/submit', async (req, res) => {
     });
     const tradeNo = orderResult.tradeNo;
 
-    // 重定向到收银台（使用相对路径）
-    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}`);
+    // 重定向到收银台（使用相对路径），透传 pay_type 以启用直连页面
+    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`);
 
   } catch (error) {
     console.error('V1 Submit Error:', error);
@@ -853,7 +853,7 @@ router.all('/submit', async (req, res) => {
 router.all('/mapi', async (req, res) => {
   try {
     const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param, cert_no, cert_name, min_age } = params;
+    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param, cert_no, cert_name, min_age, direct_pay } = params;
 
     // 参数验证
     if (!pid || !type || !out_trade_no || !notify_url || !name || !money || !sign) {
@@ -936,15 +936,53 @@ router.all('/mapi', async (req, res) => {
     const protocol = req.get('x-forwarded-proto') || req.protocol;
     const host = req.get('host');
     const baseUrl = `${protocol}://${host}`;
-    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
-    res.json({
+    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`;
+
+    const directPayEnabled = direct_pay === true || direct_pay === 1 || direct_pay === '1';
+    let payResult = null;
+    if (directPayEnabled) {
+      try {
+        const dopayResponse = await fetch(`${baseUrl}/api/pay/dopay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trade_no: tradeNo,
+            pay_type: type,
+            group_id: merchantPayGroupId
+          })
+        });
+
+        if (dopayResponse.ok) {
+          payResult = await dopayResponse.json();
+        } else {
+          const rawText = await dopayResponse.text();
+          payResult = { code: 1, msg: rawText || `支付发起失败（HTTP ${dopayResponse.status}）` };
+        }
+      } catch (dopayError) {
+        console.error('V1 MAPI Direct DoPay Error:', dopayError);
+        payResult = { code: 1, msg: '支付发起失败，请稍后重试' };
+      }
+    }
+
+    const responseData = {
       code: 1,
       msg: 'success',
       trade_no: tradeNo,
       payurl: cashierUrl,
       qrcode: '',
       urlscheme: ''
-    });
+    };
+
+    if (payResult) {
+      responseData.pay_result = payResult;
+      if (payResult.code === 0) {
+        if (payResult.qrcode) responseData.qrcode = payResult.qrcode;
+        if (payResult.scheme) responseData.urlscheme = payResult.scheme;
+        if (payResult.pay_url) responseData.payurl = payResult.pay_url;
+      }
+    }
+
+    res.json(responseData);
 
   } catch (error) {
     console.error('V1 MAPI Error:', error);
@@ -1171,7 +1209,7 @@ router.all('/create', async (req, res) => {
     switch (methodType) {
       case 'web':
       case 'jump':
-        payUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
+        payUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`;
         payType = 'jump';
         break;
       case 'scan':
@@ -1195,7 +1233,7 @@ router.all('/create', async (req, res) => {
         payType = 'wxapp';
         break;
       default:
-        payUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
+        payUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`;
         payType = 'jump';
     }
 
@@ -1426,7 +1464,7 @@ router.get('/test/config', async (req, res) => {
 // 创建测试支付订单（公开）
 router.post('/test/create', async (req, res) => {
   try {
-    const { money, pay_type, name, visitor_id } = req.body || {};
+    const { money, pay_type, name, visitor_id, direct_pay } = req.body || {};
     const testRuntime = await getTestPaymentRuntimeConfig();
 
     if (!testRuntime.enabled) {
@@ -1498,7 +1536,7 @@ router.post('/test/create', async (req, res) => {
       payGroupIdSnapshot: testRuntime.payGroupId
     });
 
-    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${orderResult.tradeNo}`;
+    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${orderResult.tradeNo}&pay_type=${encodeURIComponent(pay_type)}`;
 
     // 复用 param 字段记录测试订单访客标识（不新增数据库列）
     const [orderRows] = await db.query('SELECT param FROM orders WHERE id = ? LIMIT 1', [orderResult.orderId]);
@@ -1510,6 +1548,56 @@ router.post('/test/create', async (req, res) => {
     };
     await db.query('UPDATE orders SET param = ? WHERE id = ?', [JSON.stringify(orderParam), orderResult.orderId]);
 
+    const directPayEnabled = direct_pay === true || direct_pay === 1 || direct_pay === '1';
+    let payResult = null;
+
+    if (directPayEnabled) {
+      try {
+        const dopayResponse = await fetch(`${baseUrl}/api/pay/dopay`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            trade_no: orderResult.tradeNo,
+            pay_type,
+            group_id: testRuntime.payGroupId
+          })
+        });
+
+        if (dopayResponse.ok) {
+          payResult = await dopayResponse.json();
+        } else {
+          const rawText = await dopayResponse.text();
+          payResult = {
+            code: 1,
+            msg: rawText || `支付发起失败（HTTP ${dopayResponse.status}）`
+          };
+        }
+      } catch (dopayError) {
+        console.error('Create Test Pay Direct DoPay Error:', dopayError);
+        payResult = {
+          code: 1,
+          msg: '支付发起失败，请稍后重试'
+        };
+      }
+    }
+
+    if (payResult && payResult.code !== 0) {
+      return res.json({
+        code: 1,
+        msg: payResult.msg || '支付发起失败',
+        data: {
+          trade_no: orderResult.tradeNo,
+          cashier_url: cashierUrl,
+          pay_type,
+          visitor_id: visitorId,
+          visitor_sig: visitorSig,
+          pay_result: payResult
+        }
+      });
+    }
+
     res.json({
       code: 0,
       msg: 'success',
@@ -1518,7 +1606,8 @@ router.post('/test/create', async (req, res) => {
         cashier_url: cashierUrl,
         pay_type,
         visitor_id: visitorId,
-        visitor_sig: visitorSig
+        visitor_sig: visitorSig,
+        pay_result: payResult
       }
     });
   } catch (error) {
@@ -1666,7 +1755,7 @@ router.get('/cashier', async (req, res) => {
     // 获取服务商配置的支付类型列表
     payTypes = await getPayTypesByGroups(forcedGroupId);
 
-    // 收银台允许通过 query 传入 pay_type，命中可用类型时直接写回订单并自动进入支付
+    // 收银台允许通过 query 传入 pay_type，命中可用类型时写回订单
     let autoPayType = '';
     if (requestedPayType) {
       const matchedPayType = payTypes.find((p) => p.type_code === requestedPayType);
@@ -1677,11 +1766,13 @@ router.get('/cashier', async (req, res) => {
         }
         autoPayType = requestedPayType;
       } else {
-        console.warn(`[Cashier] 忽略无效 pay_type 参数: trade_no=${trade_no}, pay_type=${requestedPayType}`);
+        console.warn(`[Cashier] 拒绝无效 pay_type 参数: trade_no=${trade_no}, pay_type=${requestedPayType}`);
+        return res.render('error', {
+          message: '指定支付方式不可用，请返回重试',
+          code: 'PAY_TYPE_NOT_AVAILABLE',
+          backUrl: null
+        });
       }
-    } else if (order.pay_type && payTypes.some((p) => p.type_code === order.pay_type)) {
-      // 历史流程若已带支付类型，也直接自动支付
-      autoPayType = order.pay_type;
     }
 
     // 计算当前选中的支付方式对应的 group_id
@@ -1722,12 +1813,29 @@ router.get('/cashier', async (req, res) => {
       }
     }
 
+    // 传入 pay_type 时，启用直连模式，但仍复用 cashier.ejs 的统一UI模板
+    if (requestedPayType && autoPayType) {
+      return res.render('cashier', {
+        order: { ...order, display_name: displayOrderName },
+        payTypes,
+        selectedGroupId,
+        autoPayType: autoPayType,
+        directMode: true,
+        sitename: order.sitename || '在线支付',
+        isCrypto: false,
+        lockedPayment,
+        testVisitorId,
+        testVisitorSig
+      });
+    }
+
     // 渲染收银台页面（使用 EJS 模板）
     res.render('cashier', {
       order: { ...order, display_name: displayOrderName },  // 添加显示名称
       payTypes,
       selectedGroupId,
-      autoPayType,
+      autoPayType: '',
+      directMode: false,
       sitename: order.sitename || '在线支付',
       isCrypto: false,
       lockedPayment,  // 传递锁定的支付信息
@@ -3100,8 +3208,9 @@ router.get('/qrcode', async (req, res) => {
       return res.redirect(`/api/pay/success?trade_no=${trade_no}`);
     }
 
-    // 重定向到收银台页面，二维码将在收银台内显示
-    res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
+    // 重定向到收银台页面，透传 pay_type 以便直连模式生效
+    const payTypeQuery = order.pay_type ? `&pay_type=${encodeURIComponent(order.pay_type)}` : '';
+    res.redirect(`/api/pay/cashier?trade_no=${trade_no}${payTypeQuery}`);
 
   } catch (error) {
     console.error('QRCode Page Error:', error);
@@ -3343,8 +3452,9 @@ async function handleSubmit(req, res) {
     });
     const tradeNo = orderResult.tradeNo;
 
-    // 重定向到收银台（使用相对路径）
-    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}`);
+    // 重定向到收银台（使用相对路径），透传 pay_type 以启用直连页面
+    const payTypeQuery = type ? `&pay_type=${encodeURIComponent(type)}` : '';
+    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}${payTypeQuery}`);
 
   } catch (error) {
     console.error('Submit Error:', error);
@@ -3493,7 +3603,7 @@ async function handleMapi(req, res) {
     const protocol = req.get('x-forwarded-proto') || req.protocol;
     const host = req.get('host');
     const baseUrl = `${protocol}://${host}`;
-    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}`;
+    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}${type ? `&pay_type=${encodeURIComponent(type)}` : ''}`;
     const methodType = method || 'web';
     
     let payType = 'jump';
@@ -3861,8 +3971,9 @@ router.all('/:func/:trade_no', async (req, res) => {
     }
 
     if (result.type === 'qrcode') {
-      // 重定向到收银台页面，二维码将在收银台内显示
-      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
+      // 重定向到收银台页面，透传 pay_type 以便直连模式生效
+      const payTypeQuery = order.pay_type ? `&pay_type=${encodeURIComponent(order.pay_type)}` : '';
+      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}${payTypeQuery}`);
     }
 
     if (result.type === 'jsapi') {
@@ -3921,8 +4032,9 @@ router.all('/:func/:trade_no', async (req, res) => {
     }
 
     if (result.type === 'scheme') {
-      // 重定向到收银台页面
-      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
+      // 重定向到收银台页面，透传 pay_type 以便直连模式生效
+      const payTypeQuery = order.pay_type ? `&pay_type=${encodeURIComponent(order.pay_type)}` : '';
+      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}${payTypeQuery}`);
     }
 
     // 默认跳转
@@ -3930,7 +4042,10 @@ router.all('/:func/:trade_no', async (req, res) => {
       return res.redirect(result.url);
     }
 
-    return res.redirect(`/api/pay/cashier?trade_no=${trade_no}`);
+    {
+      const payTypeQuery = order.pay_type ? `&pay_type=${encodeURIComponent(order.pay_type)}` : '';
+      return res.redirect(`/api/pay/cashier?trade_no=${trade_no}${payTypeQuery}`);
+    }
 
   } catch (error) {
     console.error('动态支付路由错误:', error);
