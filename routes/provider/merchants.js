@@ -393,7 +393,44 @@ router.get('/merchants/stats', requireProviderRamPermission('merchant'), async (
 router.post('/merchants/update', requireProviderRamPermission('merchant'), async (req, res) => {
   try {
     const ramUser = req.ramUser;
-    const { merchant_id, remark, fee_rate, fee_rates, fee_payer, status, pay_group_id } = req.body;
+    const { merchant_id, merchant_user_id, merchant_record_id, remark, fee_rate, fee_rates, fee_payer, status, pay_group_id } = req.body;
+
+    const merchantKey = parseInt(merchant_id, 10);
+    const merchantUserId = parseInt(merchant_user_id, 10);
+    const merchantRecordId = parseInt(merchant_record_id, 10);
+
+    if (Number.isNaN(merchantKey) || merchantKey <= 0) {
+      return res.json({ code: -1, msg: '无效的商户ID' });
+    }
+
+    // 解析要更新的 merchants.id，避免 merchant_id(可能是 user_id 或 merchants.id) 歧义更新到错误账号
+    let targetMerchantId = null;
+    if (!Number.isNaN(merchantRecordId) && merchantRecordId > 0) {
+      const [rows] = await db.query('SELECT id FROM merchants WHERE id = ? LIMIT 1', [merchantRecordId]);
+      if (rows.length === 0) {
+        return res.json({ code: -1, msg: '商户不存在' });
+      }
+      targetMerchantId = merchantRecordId;
+    } else if (!Number.isNaN(merchantUserId) && merchantUserId > 0) {
+      const [rows] = await db.query('SELECT id FROM merchants WHERE user_id = ? LIMIT 1', [merchantUserId]);
+      if (rows.length === 0) {
+        return res.json({ code: -1, msg: '商户不存在' });
+      }
+      targetMerchantId = rows[0].id;
+    } else {
+      const [candidates] = await db.query(
+        'SELECT id, user_id FROM merchants WHERE id = ? OR user_id = ? LIMIT 2',
+        [merchantKey, merchantKey]
+      );
+
+      if (candidates.length === 0) {
+        return res.json({ code: -1, msg: '商户不存在' });
+      }
+      if (candidates.length > 1) {
+        return res.json({ code: -1, msg: '商户ID存在歧义，请刷新页面后重试' });
+      }
+      targetMerchantId = candidates[0].id;
+    }
 
     // 检查是否有 channel 权限（用于修改费率和支付组）
     const hasChannelPermission = !ramUser || 
@@ -423,8 +460,22 @@ router.post('/merchants/update', requireProviderRamPermission('merchant'), async
       params.push(fee_payer);
     }
     if (pay_group_id !== undefined && hasChannelPermission) {
+      const normalizedPayGroupId = (pay_group_id === null || pay_group_id === '' || pay_group_id === undefined)
+        ? null
+        : parseInt(pay_group_id, 10);
+
+      if (normalizedPayGroupId !== null) {
+        if (Number.isNaN(normalizedPayGroupId) || normalizedPayGroupId <= 0) {
+          return res.json({ code: -1, msg: '无效的支付组ID' });
+        }
+        const [groups] = await db.query('SELECT id FROM provider_pay_groups WHERE id = ? LIMIT 1', [normalizedPayGroupId]);
+        if (groups.length === 0) {
+          return res.json({ code: -1, msg: '支付组不存在' });
+        }
+      }
+
       updates.push('pay_group_id = ?');
-      params.push(pay_group_id);
+      params.push(normalizedPayGroupId);
     }
     
     // 状态修改只需要 merchant 权限
@@ -443,13 +494,16 @@ router.post('/merchants/update', requireProviderRamPermission('merchant'), async
     }
 
     // 单服务商模式，不按 provider_id 过滤
-    // merchant_id 可能是 users.id (user_id) 或 merchants.id
-    params.push(merchant_id);
+    params.push(targetMerchantId);
 
-    await db.query(
-      `UPDATE merchants SET ${updates.join(', ')} WHERE user_id = ?`,
+    const [updateResult] = await db.query(
+      `UPDATE merchants SET ${updates.join(', ')} WHERE id = ? LIMIT 1`,
       params
     );
+
+    if (!updateResult || updateResult.affectedRows === 0) {
+      return res.json({ code: -1, msg: '商户不存在或未更新' });
+    }
 
     res.json({ code: 0, msg: '更新成功' });
   } catch (error) {

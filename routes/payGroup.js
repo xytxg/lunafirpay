@@ -491,12 +491,67 @@ router.get('/pay-groups/:id', async (req, res) => {
  */
 router.post('/merchants/set-pay-group', async (req, res) => {
     try {
-        const { merchant_id, pay_group_id } = req.body;
+        const { merchant_id, merchant_user_id, merchant_record_id, pay_group_id } = req.body;
+
+        const merchantKey = parseInt(merchant_id, 10);
+        const merchantUserId = parseInt(merchant_user_id, 10);
+        const merchantRecordId = parseInt(merchant_record_id, 10);
+        if (isNaN(merchantKey) || merchantKey <= 0) {
+            return res.json({ code: -1, msg: '无效的商户ID' });
+        }
+
+        let targetMerchantId = null;
+        if (!isNaN(merchantRecordId) && merchantRecordId > 0) {
+            const [rows] = await db.query('SELECT id FROM merchants WHERE id = ? LIMIT 1', [merchantRecordId]);
+            if (rows.length === 0) {
+                return res.json({ code: -1, msg: '商户不存在' });
+            }
+            targetMerchantId = merchantRecordId;
+        } else if (!isNaN(merchantUserId) && merchantUserId > 0) {
+            const [rows] = await db.query('SELECT id FROM merchants WHERE user_id = ? LIMIT 1', [merchantUserId]);
+            if (rows.length === 0) {
+                return res.json({ code: -1, msg: '商户不存在' });
+            }
+            targetMerchantId = rows[0].id;
+        } else {
+            const [candidates] = await db.query(
+                'SELECT id, user_id FROM merchants WHERE id = ? OR user_id = ? LIMIT 2',
+                [merchantKey, merchantKey]
+            );
+            if (candidates.length === 0) {
+                return res.json({ code: -1, msg: '商户不存在' });
+            }
+            if (candidates.length > 1) {
+                return res.json({ code: -1, msg: '商户ID存在歧义，请刷新页面后重试' });
+            }
+            targetMerchantId = candidates[0].id;
+        }
+
+        const normalizedPayGroupId = (pay_group_id === null || pay_group_id === '' || pay_group_id === undefined)
+            ? null
+            : parseInt(pay_group_id, 10);
+
+        if (normalizedPayGroupId !== null) {
+            if (isNaN(normalizedPayGroupId) || normalizedPayGroupId <= 0) {
+                return res.json({ code: -1, msg: '无效的支付组ID' });
+            }
+            const [groups] = await db.query(
+                'SELECT id FROM provider_pay_groups WHERE id = ? LIMIT 1',
+                [normalizedPayGroupId]
+            );
+            if (groups.length === 0) {
+                return res.json({ code: -1, msg: '支付组不存在' });
+            }
+        }
         
-        await db.query(
-            'UPDATE merchants SET pay_group_id = ? WHERE id = ?',
-            [pay_group_id || null, merchant_id]
+        const [result] = await db.query(
+            'UPDATE merchants SET pay_group_id = ? WHERE id = ? LIMIT 1',
+            [normalizedPayGroupId, targetMerchantId]
         );
+
+        if (!result || result.affectedRows === 0) {
+            return res.json({ code: -1, msg: '商户不存在或未更新' });
+        }
         
         res.json({ code: 0, msg: '设置成功' });
     } catch (error) {

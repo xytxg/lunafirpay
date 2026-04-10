@@ -129,6 +129,18 @@ function getClientIP(req) {
   return getClientIp(req) || req.ip;
 }
 
+function logChannelSelectionInfo(message, payload = {}) {
+  console.log(`[ChannelSelect] ${message}`, payload);
+}
+
+function logChannelSelectionWarn(message, payload = {}) {
+  console.warn(`[ChannelSelect] ${message}`, payload);
+}
+
+function logChannelSelectionError(message, payload = {}) {
+  console.error(`[ChannelSelect] ${message}`, payload);
+}
+
 // 通过 PID（12位随机ID）获取商户信息（单服务商模式）
 async function getMerchantByPid(pid) {
   const [merchants] = await db.query(
@@ -231,20 +243,49 @@ async function generateUniquePid() {
 
 // 获取支付通道（单服务商模式，不按 provider_id 过滤）
 async function getChannel(type, payGroupId = null, options = {}) {
-  // 指定了支付组时，按支付组配置选通道
-  if (payGroupId) {
-    return selectChannelFromGroup(type, payGroupId, options);
-  }
+  try {
+    let channel = null;
 
-  const [channels] = await db.query(
-    `SELECT *, pay_type as type_code, channel_name as type_name,
-            min_money as min_amount, max_money as max_amount
-     FROM provider_channels
-     WHERE FIND_IN_SET(?, pay_type) AND status = 1 AND (is_deleted = 0 OR is_deleted IS NULL)
-     ORDER BY priority DESC LIMIT 1`,
-    [type]
-  );
-  return channels[0];
+    // 指定了支付组时，按支付组配置选通道
+    if (payGroupId) {
+      channel = await selectChannelFromGroup(type, payGroupId, options);
+    } else {
+      const [channels] = await db.query(
+        `SELECT *, pay_type as type_code, channel_name as type_name,
+                min_money as min_amount, max_money as max_amount
+         FROM provider_channels
+         WHERE FIND_IN_SET(?, pay_type) AND status = 1 AND (is_deleted = 0 OR is_deleted IS NULL)
+         ORDER BY priority DESC LIMIT 1`,
+        [type]
+      );
+      channel = channels[0] || null;
+    }
+
+    if (channel) {
+      logChannelSelectionInfo('下单选中通道', {
+        payType: type,
+        payGroupId: payGroupId || null,
+        channelId: channel.id,
+        channelName: channel.channel_name || channel.type_name || '',
+        plugin: channel.plugin_name || channel.plugin || ''
+      });
+    } else {
+      logChannelSelectionWarn('下单未选到可用通道', {
+        payType: type,
+        payGroupId: payGroupId || null,
+        reason: 'NO_AVAILABLE_CHANNEL'
+      });
+    }
+
+    return channel;
+  } catch (error) {
+    logChannelSelectionError('下单选通道异常', {
+      payType: type,
+      payGroupId: payGroupId || null,
+      error: error.message
+    });
+    throw error;
+  }
 }
 
 // 获取支付通道列表（单服务商模式）
@@ -1547,6 +1588,7 @@ router.post('/test/cancel', async (req, res) => {
 router.get('/cashier', async (req, res) => {
   try {
     const { trade_no } = req.query;
+    const requestedPayType = typeof req.query.pay_type === 'string' ? req.query.pay_type.trim() : '';
 
     if (!trade_no) {
       return res.status(400).send('订单号不能为空');
@@ -1624,6 +1666,24 @@ router.get('/cashier', async (req, res) => {
     // 获取服务商配置的支付类型列表
     payTypes = await getPayTypesByGroups(forcedGroupId);
 
+    // 收银台允许通过 query 传入 pay_type，命中可用类型时直接写回订单并自动进入支付
+    let autoPayType = '';
+    if (requestedPayType) {
+      const matchedPayType = payTypes.find((p) => p.type_code === requestedPayType);
+      if (matchedPayType) {
+        if (order.pay_type !== requestedPayType) {
+          await db.query('UPDATE orders SET pay_type = ? WHERE id = ?', [requestedPayType, order.id]);
+          order.pay_type = requestedPayType;
+        }
+        autoPayType = requestedPayType;
+      } else {
+        console.warn(`[Cashier] 忽略无效 pay_type 参数: trade_no=${trade_no}, pay_type=${requestedPayType}`);
+      }
+    } else if (order.pay_type && payTypes.some((p) => p.type_code === order.pay_type)) {
+      // 历史流程若已带支付类型，也直接自动支付
+      autoPayType = order.pay_type;
+    }
+
     // 计算当前选中的支付方式对应的 group_id
     if (forcedGroupId) {
       selectedGroupId = String(forcedGroupId);
@@ -1667,6 +1727,7 @@ router.get('/cashier', async (req, res) => {
       order: { ...order, display_name: displayOrderName },  // 添加显示名称
       payTypes,
       selectedGroupId,
+      autoPayType,
       sitename: order.sitename || '在线支付',
       isCrypto: false,
       lockedPayment,  // 传递锁定的支付信息
@@ -1779,6 +1840,15 @@ async function selectChannelFromGroup(payType, payGroupId = null, options = {}) 
     );
     payGroup = allGroups[0];
   }
+
+  if (!payGroup) {
+    logChannelSelectionWarn('支付组选择失败：未找到可用支付组', {
+      payType,
+      requestedPayGroupId: requestedPayGroupId || null,
+      reason: 'PAY_GROUP_NOT_FOUND'
+    });
+    return null;
+  }
   
   // 获取支付类型 ID（从配置文件）
   const payTypeInfo = getPayTypeByName(payType);
@@ -1796,9 +1866,27 @@ async function selectChannelFromGroup(payType, payGroupId = null, options = {}) 
   
   // 获取该支付类型的配置
   const typeConfig = payTypeId ? config[payTypeId.toString()] : null;
+
+  // 支付组未配置该支付方式时，视为不可用，避免错误回退到全局随机通道
+  if (!typeConfig) {
+    logChannelSelectionWarn('支付组选择失败：支付组未配置该支付方式', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      payTypeId,
+      reason: 'PAY_TYPE_NOT_CONFIGURED_IN_GROUP'
+    });
+    return null;
+  }
   
   // 如果该支付类型被关闭或未配置
   if (typeConfig && typeConfig.channel_mode === 0) {
+    logChannelSelectionWarn('支付组选择失败：该支付方式在支付组中被关闭', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      reason: 'PAY_TYPE_DISABLED_IN_GROUP'
+    });
     return null;
   }
   
@@ -1887,12 +1975,28 @@ async function selectChannelFromGroup(payType, payGroupId = null, options = {}) 
           }
           
           if (selectedChannel) {
-            console.log('轮询组选中通道:', selectedChannel.id, selectedChannel.channel_name, selectedChannel.plugin_name);
+            logChannelSelectionInfo('轮询组选中通道', {
+              payType,
+              payGroupId: payGroup.id,
+              payGroupName: payGroup.name,
+              groupId: group.id,
+              groupName: group.name,
+              channelId: selectedChannel.id,
+              channelName: selectedChannel.channel_name,
+              plugin: selectedChannel.plugin_name
+            });
             return selectedChannel;
           }
         }
       }
     }
+    logChannelSelectionWarn('轮询组未选到通道，回退到支付方式通道池', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      groupId: typeConfig.group_id,
+      reason: 'GROUP_EMPTY_OR_FILTERED'
+    });
     // 轮询组无效或没有符合条件的通道，继续走下面的逻辑
   }
   
@@ -1906,6 +2010,12 @@ async function selectChannelFromGroup(payType, payGroupId = null, options = {}) 
   );
   
   if (channels.length === 0) {
+    logChannelSelectionWarn('支付组选择失败：支付方式无可用通道', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      reason: 'NO_CHANNEL_FOR_PAY_TYPE'
+    });
     return null;
   }
   
@@ -1935,29 +2045,86 @@ async function selectChannelFromGroup(payType, payGroupId = null, options = {}) 
   }
   
   if (filteredChannels.length === 0) {
+    logChannelSelectionWarn('支付组选择失败：通道被年龄限制过滤', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      minAge,
+      reason: 'MIN_AGE_FILTERED_OUT'
+    });
     return null;
   }
   
   // 如果只有一个通道，直接返回
   if (filteredChannels.length === 1) {
+    logChannelSelectionInfo('支付组选中通道（唯一可用）', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      channelId: filteredChannels[0].id,
+      channelName: filteredChannels[0].channel_name,
+      plugin: filteredChannels[0].plugin_name
+    });
     return filteredChannels[0];
   }
   
   if (mode > 0) {
     // 指定通道
     const specified = filteredChannels.find(c => c.id === mode);
-    return specified || filteredChannels[0];
+    const selected = specified || filteredChannels[0];
+    logChannelSelectionInfo('支付组选中通道（指定模式）', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      mode,
+      requestedChannelId: mode,
+      channelId: selected.id,
+      channelName: selected.channel_name,
+      plugin: selected.plugin_name,
+      fallback: !specified
+    });
+    return selected;
   } else if (mode === -5) {
     // 首个可用
-    return filteredChannels[0];
+    const selected = filteredChannels[0];
+    logChannelSelectionInfo('支付组选中通道（首个可用）', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      mode,
+      channelId: selected.id,
+      channelName: selected.channel_name,
+      plugin: selected.plugin_name
+    });
+    return selected;
   } else if (mode === -4) {
     // 顺序轮询 - TODO: 需要实现索引记录
     const randomIndex = Math.floor(Math.random() * filteredChannels.length);
-    return filteredChannels[randomIndex];
+    const selected = filteredChannels[randomIndex];
+    logChannelSelectionInfo('支付组选中通道（顺序轮询-当前实现随机）', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      mode,
+      channelId: selected.id,
+      channelName: selected.channel_name,
+      plugin: selected.plugin_name
+    });
+    return selected;
   } else {
     // 默认随机
     const randomIndex = Math.floor(Math.random() * filteredChannels.length);
-    return filteredChannels[randomIndex];
+    const selected = filteredChannels[randomIndex];
+    logChannelSelectionInfo('支付组选中通道（随机）', {
+      payType,
+      payGroupId: payGroup.id,
+      payGroupName: payGroup.name,
+      mode,
+      channelId: selected.id,
+      channelName: selected.channel_name,
+      plugin: selected.plugin_name
+    });
+    return selected;
   }
 }
 
@@ -2018,7 +2185,15 @@ router.post('/dopay', async (req, res) => {
       
       channelConfig = channels[0];
       finalPayType = order.pay_type;
-      console.log('订单已锁定通道:', order.channel_id, channelConfig.channel_name);
+      logChannelSelectionInfo('订单已锁定通道', {
+        tradeNo: order.trade_no,
+        orderId: order.id,
+        payType: finalPayType,
+        payGroupId: effectiveGroupId || null,
+        channelId: channelConfig.id,
+        channelName: channelConfig.channel_name,
+        plugin: channelConfig.plugin_name
+      });
     } else {
       // ========== 订单未选择通道，进行通道选择 ==========
       // 使用传入的 pay_type 或订单已选择的 pay_type
@@ -2047,8 +2222,27 @@ router.post('/dopay', async (req, res) => {
       channelConfig = await selectChannelFromGroup(finalPayType, effectiveGroupId, { minAge: merchantMinAge });
 
       if (!channelConfig) {
+        logChannelSelectionWarn('DoPay 选通道失败', {
+          tradeNo: order.trade_no,
+          orderId: order.id,
+          payType: finalPayType,
+          payGroupId: effectiveGroupId || null,
+          minAge: merchantMinAge,
+          reason: merchantMinAge ? 'NO_CHANNEL_MATCH_MIN_AGE' : 'NO_AVAILABLE_CHANNEL'
+        });
         return res.json({ code: 1, msg: merchantMinAge ? '没有符合年龄限制的支付通道可用' : '支付通道不可用，请联系服务商' });
       }
+
+      logChannelSelectionInfo('DoPay 选中通道', {
+        tradeNo: order.trade_no,
+        orderId: order.id,
+        payType: finalPayType,
+        payGroupId: effectiveGroupId || null,
+        minAge: merchantMinAge,
+        channelId: channelConfig.id,
+        channelName: channelConfig.channel_name,
+        plugin: channelConfig.plugin_name
+      });
 
       // 获取商户信息计算费率
       const [merchants] = await db.query(
@@ -2213,6 +2407,15 @@ router.post('/dopay', async (req, res) => {
     if (result.type === 'error') {
       // 检查是否需要自动关闭通道
       await checkAndAutoCloseChannel(result.msg, channelConfig);
+      logChannelSelectionError('DoPay 插件返回错误', {
+        tradeNo: order.trade_no,
+        orderId: order.id,
+        payType: finalPayType,
+        channelId: channelConfig?.id,
+        channelName: channelConfig?.channel_name,
+        plugin: channelConfig?.plugin_name,
+        error: result.msg || 'UNKNOWN_PLUGIN_ERROR'
+      });
       return res.json({ code: 1, msg: result.msg || '支付失败' });
     }
 
@@ -2288,7 +2491,13 @@ router.post('/dopay', async (req, res) => {
     return res.json({ code: 0, msg: 'success', pay_url: result.url || result.pay_url });
 
   } catch (error) {
-    console.error('DoPay Error:', error);
+    console.error('DoPay Error:', {
+      message: error.message,
+      stack: error.stack
+    });
+    logChannelSelectionError('DoPay 处理异常', {
+      error: error.message
+    });
     // 注意：此处 channelConfig 可能未定义，需要安全访问
     if (typeof channelConfig !== 'undefined' && channelConfig) {
       await checkAndAutoCloseChannel(error.message, channelConfig);

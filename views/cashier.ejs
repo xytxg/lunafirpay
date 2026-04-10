@@ -681,6 +681,7 @@
   <script>
     (function() {
       var selectedType = '<%= order.pay_type || "" %>';
+      var autoPayType = '<%= autoPayType || "" %>';
       var selectedGroupId = '<%= selectedGroupId %>';
       var tradeNo = '<%= order.trade_no %>';
       var testVisitorId = '<%= testVisitorId || "" %>';
@@ -757,7 +758,7 @@
         if (payBtn) payBtn.style.display = 'none';
         qrcodePanel.style.display = 'block';
         qrcodeStatus.className = 'qrcode-status waiting';
-        qrcodeStatus.innerHTML = '<span class="status-spinner"></span><span>等待支付中...</span>';
+        qrcodeStatus.innerHTML = '<span>请在支付宝中完成支付</span>';
         
         // 自动跳转（非Edge浏览器）
         if (!schemeUrl.startsWith('http://') && !schemeUrl.startsWith('https://') && navigator.userAgent.indexOf('EdgA/') === -1) {
@@ -807,7 +808,7 @@
         }
         updateExpireTimeDisplay();
         qrcodeStatus.className = 'qrcode-status waiting';
-        qrcodeStatus.innerHTML = '<span class="status-spinner"></span><span>等待扫码支付...</span>';
+        qrcodeStatus.innerHTML = '<span>请使用对应APP扫码支付</span>';
         qrcodeCountdown.style.display = 'block';
         qrcodePanel.style.display = 'block';
         // 如果已锁定，隐藏返回按钮
@@ -915,71 +916,79 @@
 
       // 支付按钮
       var payBtn = document.getElementById('payBtn');
+      async function triggerPay(silentMode) {
+        if (!selectedType) {
+          alert('请选择支付方式');
+          return;
+        }
+
+        if (!silentMode) {
+          payBtn.disabled = true;
+          payBtn.innerHTML = '<div class="spinner"></div><span>处理中...</span>';
+        } else {
+          payBtn.disabled = true;
+        }
+
+        try {
+          var res = await fetch('/api/pay/dopay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              trade_no: tradeNo, 
+              pay_type: selectedType, 
+              group_id: selectedGroupId 
+            })
+          });
+
+          // 检查 HTTP 状态码
+          if (!res.ok) {
+              var errorText = await res.text(); // 获取非 JSON 的错误信息
+              console.error('Server Error:', res.status, errorText);
+              alert('服务器错误 (' + res.status + ')，请联系管理员');
+              payBtn.disabled = false;
+              payBtn.innerHTML = '<span>支付</span>';
+              return;
+          }
+
+          var data = await res.json();
+          
+          if (data.code === 0) {
+            if (data.html) {
+              // HTML表单自动提交（如支付宝网页支付）
+              document.open();
+              document.write(data.html);
+              document.close();
+            } else if (data.scheme) {
+              // APP跳转协议（如支付宝/微信APP唤起）
+              window.location.href = data.scheme;
+            } else if (data.alipay_h5) {
+              // 支付宝H5唤起APP - 在当前页面显示
+              showAlipayH5(data.alipay_h5.code_url, data.alipay_h5.money || '<%= order.money %>');
+            } else if (data.qrcode) {
+              // 普通支付二维码 - 在当前页面显示（优先于跳转）
+              var activeMethod = document.querySelector('.payment-method.active');
+              var payTypeName = activeMethod ? activeMethod.querySelector('.method-name').textContent : '';
+              showQrcode(data.qrcode, payTypeName);
+            } else if (data.pay_url) {
+              // 普通支付 - 跳转到支付页面
+              window.location.href = data.pay_url;
+            }
+          } else {
+            alert(data.msg || '支付失败，请稍后重试');
+            payBtn.disabled = false;
+            payBtn.innerHTML = '<span>支付</span>';
+          }
+        } catch (e) {
+          console.error('Payment Error:', e);
+          alert('网络错误或数据解析失败，请稍后重试');
+          payBtn.disabled = false;
+          payBtn.innerHTML = '<span>支付</span>';
+        }
+      }
+
       if (payBtn) {
-        payBtn.addEventListener('click', async function() {
-          if (!selectedType) {
-            alert('请选择支付方式');
-            return;
-          }
-          
-          this.disabled = true;
-          this.innerHTML = '<div class="spinner"></div><span>处理中...</span>';
-          
-          try {
-            var res = await fetch('/api/pay/dopay', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                trade_no: tradeNo, 
-                pay_type: selectedType, 
-                group_id: selectedGroupId 
-              })
-            });
-
-            // 检查 HTTP 状态码
-            if (!res.ok) {
-                var errorText = await res.text(); // 获取非 JSON 的错误信息
-                console.error('Server Error:', res.status, errorText);
-                alert('服务器错误 (' + res.status + ')，请联系管理员');
-                this.disabled = false;
-                this.innerHTML = '<span>支付</span>';
-                return;
-            }
-
-            var data = await res.json();
-            
-            if (data.code === 0) {
-              if (data.html) {
-                // HTML表单自动提交（如支付宝网页支付）
-                document.open();
-                document.write(data.html);
-                document.close();
-              } else if (data.scheme) {
-                // APP跳转协议（如支付宝/微信APP唤起）
-                window.location.href = data.scheme;
-              } else if (data.alipay_h5) {
-                // 支付宝H5唤起APP - 在当前页面显示
-                showAlipayH5(data.alipay_h5.code_url, data.alipay_h5.money || '<%= order.money %>');
-              } else if (data.qrcode) {
-                // 普通支付二维码 - 在当前页面显示（优先于跳转）
-                var activeMethod = document.querySelector('.payment-method.active');
-                var payTypeName = activeMethod ? activeMethod.querySelector('.method-name').textContent : '';
-                showQrcode(data.qrcode, payTypeName);
-              } else if (data.pay_url) {
-                // 普通支付 - 跳转到支付页面
-                window.location.href = data.pay_url;
-              }
-            } else {
-              alert(data.msg || '支付失败，请稍后重试');
-              this.disabled = false;
-              this.innerHTML = '<span>支付</span>';
-            }
-          } catch (e) {
-            console.error('Payment Error:', e);
-            alert('网络错误或数据解析失败，请稍后重试');
-            this.disabled = false;
-            this.innerHTML = '<span>支付</span>';
-          }
+        payBtn.addEventListener('click', function() {
+          triggerPay(false);
         });
       }
 
@@ -995,9 +1004,21 @@
         // 自动点击支付按钮
         setTimeout(function() {
           if (payBtn) {
-            payBtn.click();
+            triggerPay(true);
           }
         }, 300);
+      } else if (autoPayType) {
+        selectedType = autoPayType;
+        document.querySelectorAll('.payment-method').forEach(function(item) {
+          item.classList.toggle('active', item.dataset.type === autoPayType);
+        });
+
+        // 传入支付方式时直接拉起支付，不展示“处理中”转圈
+        setTimeout(function() {
+          if (payBtn) {
+            triggerPay(true);
+          }
+        }, 0);
       }
     })();
   </script>
