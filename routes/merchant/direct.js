@@ -73,8 +73,11 @@ router.get('/direct/config', requireMerchantRamPermission('settings'), async (re
 // 启用默认直接收款链接（24位Token，一经生成永久不变）
 router.post('/direct/enable', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
+<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
 
+=======
+>>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
 
     const [users] = await db.query(
@@ -115,8 +118,11 @@ router.post('/direct/enable', requireMerchantRamPermission('settings'), async (r
 // 关闭默认直接收款链接
 router.post('/direct/disable', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
+<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
 
+=======
+>>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     await db.query('UPDATE users SET direct_pay_enabled = 0 WHERE id = ?', [user_id]);
     res.json({ code: 0, msg: '已关闭直接收款' });
@@ -129,8 +135,11 @@ router.post('/direct/disable', requireMerchantRamPermission('settings'), async (
 // 固定金额链接列表
 router.get('/direct/links', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
+<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
 
+=======
+>>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     const [rows] = await db.query(
       `SELECT dl.id, dl.token, dl.fixed_amount, dl.expire_hours, dl.reason, dl.expires_at, dl.is_enabled, dl.created_at,
@@ -174,8 +183,11 @@ router.get('/direct/links', requireMerchantRamPermission('settings'), async (req
 // 创建固定金额链接（32位Token）
 router.post('/direct/links', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
+<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
 
+=======
+>>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     const { amount, expireHours, reason } = req.body;
 
@@ -221,8 +233,11 @@ router.post('/direct/links', requireMerchantRamPermission('settings'), async (re
 // 启用/停用固定金额链接
 router.post('/direct/links/:id/toggle', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
+<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
 
+=======
+>>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     const id = parseInt(req.params.id, 10);
     const enabled = req.body && (req.body.enabled === 1 || req.body.enabled === true || req.body.enabled === '1') ? 1 : 0;
