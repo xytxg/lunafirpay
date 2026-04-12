@@ -1,0 +1,47 @@
+<script>
+  // Shared checkout UI helpers for EJS pages
+  window.CheckoutUI = {
+    showWarn: function (el, msg) {
+      if (!el) return;
+      el.style.display = 'block';
+      el.textContent = msg || '发生未知错误';
+    },
+    hideWarn: function (el) {
+      if (!el) return;
+      el.style.display = 'none';
+      el.textContent = '';
+    },
+    setButtonLoading: function (btn, text) {
+      if (!btn) return;
+      btn.disabled = true;
+      btn.dataset.originalText = btn.dataset.originalText || btn.textContent;
+      btn.textContent = text || '处理中...';
+    },
+    setButtonLoadingWithProgress: function (btn, text) {
+      if (!btn) return;
+      if (!btn.dataset.originalHtml) {
+        btn.dataset.originalHtml = btn.innerHTML;
+      }
+      btn.disabled = true;
+      btn.classList.add('is-loading');
+      btn.innerHTML =
+        '<span class="btn-text">' + (text || '处理中...') + '</span>' +
+        '<span class="btn-progress" aria-hidden="true"><span class="btn-progress-fill"></span></span>';
+    },
+    resetButton: function (btn, fallbackText) {
+      if (!btn) return;
+      btn.disabled = false;
+      btn.classList.remove('is-loading');
+      if (btn.dataset.originalHtml) {
+        btn.innerHTML = btn.dataset.originalHtml;
+        return;
+      }
+      btn.textContent = btn.dataset.originalText || fallbackText || '继续';
+    },
+    normalizeAmountText: function (value) {
+      var n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return '0.00';
+      return n.toFixed(2);
+    }
+  };
+</script>

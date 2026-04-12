@@ -20,6 +20,7 @@ router.get('/system/config', requireProviderRamPermission('settings'), async (re
       site_name: allConfig.site_name || '支付平台',
       api_endpoint: allConfig.api_endpoint || '',
       domain_whitelist_enabled: allConfig.domain_whitelist_enabled || '0',
+      direct_pay_feature_enabled: allConfig.direct_pay_feature_enabled || '1',
       user_refund: allConfig.user_refund || '0',
       auto_approve_merchant: allConfig.auto_approve_merchant || '0',
       test_pay_enabled: allConfig.test_pay_enabled || '0',
@@ -45,6 +46,7 @@ router.post('/system/config', requireProviderRamPermission('settings'), async (r
       site_name,
       api_endpoint,
       domain_whitelist_enabled,
+      direct_pay_feature_enabled,
       user_refund,
       auto_approve_merchant,
       test_pay_enabled,
@@ -71,6 +73,9 @@ router.post('/system/config', requireProviderRamPermission('settings'), async (r
     }
     if (domain_whitelist_enabled !== undefined) {
       await systemConfig.setConfig('domain_whitelist_enabled', domain_whitelist_enabled, '启用域名白名单验证');
+    }
+    if (direct_pay_feature_enabled !== undefined) {
+      await systemConfig.setConfig('direct_pay_feature_enabled', String(direct_pay_feature_enabled), '直接收款功能开关(0=关闭,1=开启)');
     }
     if (user_refund !== undefined) {
       await systemConfig.setConfig('user_refund', user_refund, '商户自助退款(0=关闭,1=开启)');

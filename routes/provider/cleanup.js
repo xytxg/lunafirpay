@@ -40,7 +40,7 @@ function logCleanupResponse(tag, result) {
 }
 
 // 商户列表（用于清理页面选择，分页20）
-router.get('/cleanup/merchants', requireProviderRamPermission('merchant'), async (req, res) => {
+router.get('/cleanup/merchants', requireProviderRamPermission('finance', 'order', 'settings'), async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page || '1', 10), 1);
     const pageSize = Math.max(parseInt(req.query.pageSize || '20', 10), 1);
@@ -89,7 +89,7 @@ router.get('/cleanup/merchants', requireProviderRamPermission('merchant'), async
 });
 
 // 获取定时清理配置
-router.get('/cleanup/config', requireProviderRamPermission('settings'), async (req, res) => {
+router.get('/cleanup/config', requireProviderRamPermission('finance', 'order', 'settings'), async (req, res) => {
   try {
     const config = await recordCleanupService.getConfig();
     res.json({ code: 0, data: config });
@@ -100,7 +100,7 @@ router.get('/cleanup/config', requireProviderRamPermission('settings'), async (r
 });
 
 // 保存定时清理配置
-router.post('/cleanup/config', requireProviderRamPermission('settings'), async (req, res) => {
+router.post('/cleanup/config', requireProviderRamPermission('finance', 'order', 'settings'), async (req, res) => {
   try {
     const config = await recordCleanupService.saveConfig(req.body || {});
     res.json({ code: 0, msg: '保存成功', data: config });
@@ -111,7 +111,7 @@ router.post('/cleanup/config', requireProviderRamPermission('settings'), async (
 });
 
 // 预览清理数量
-router.post('/cleanup/preview', requireProviderRamPermission('settings'), async (req, res) => {
+router.post('/cleanup/preview', requireProviderRamPermission('finance', 'order', 'settings'), async (req, res) => {
   try {
     logCleanupRequest('preview', req.body || {});
     const preview = await recordCleanupService.preview(req.body || {});
@@ -127,7 +127,7 @@ router.post('/cleanup/preview', requireProviderRamPermission('settings'), async 
 });
 
 // 立即执行清理
-router.post('/cleanup/run', requireProviderRamPermission('settings'), async (req, res) => {
+router.post('/cleanup/run', requireProviderRamPermission('finance', 'order', 'settings'), async (req, res) => {
   try {
     const operatorId = req.user?.user_id ? String(req.user.user_id) : 'system';
     logCleanupRequest('run', { ...(req.body || {}), operator_id: operatorId });
@@ -145,7 +145,7 @@ router.post('/cleanup/run', requireProviderRamPermission('settings'), async (req
 });
 
 // 清理日志
-router.get('/cleanup/logs', requireProviderRamPermission('settings'), async (req, res) => {
+router.get('/cleanup/logs', requireProviderRamPermission('finance', 'order', 'settings'), async (req, res) => {
   try {
     const data = await recordCleanupService.listLogs(1, 3);
     res.json({ code: 0, data });

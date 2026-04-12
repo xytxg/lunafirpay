@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>支付 - 直接收款</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <%- include('partials/checkout-shared-style') %>
+  <style>
+    :root {
+      --primary-color: #006aff;
+      --primary-hover: #0051cc;
+      --text-primary: #1a1f36;
+      --text-secondary: #697386;
+      --border-color: #dde1e7;
+      --bg-gray: #f5f7fb;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      min-height: 100vh;
+      color: var(--text-primary);
+      background: #ffffff;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 34px 16px;
+    }
+
+    .direct-shell {
+      width: 100%;
+      max-width: 980px;
+      display: grid;
+      grid-template-columns: 340px 420px;
+      gap: 64px;
+      align-items: start;
+      position: relative;
+      border-left: 1px solid #e6e9ef;
+      border-right: 1px solid #e6e9ef;
+      padding: 0 22px;
+    }
+
+    .direct-shell::before {
+      content: '';
+      position: absolute;
+      left: 372px;
+      top: -20px;
+      bottom: -20px;
+      width: 1px;
+      background: linear-gradient(180deg, transparent 0%, #e6e9ef 18%, #e6e9ef 82%, transparent 100%);
+    }
+
+    .summary-panel {
+      background: transparent;
+      border-right: none;
+      padding: 8px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .merchant-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .merchant-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+      color: #3f3a9f;
+      font-weight: 700;
+    }
+
+    .merchant-name {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .group-title {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: #61708a;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .summary-block {
+      border-radius: 12px;
+      border: 1px solid #eceff5;
+      background: rgba(255, 255, 255, 0.75);
+      padding: 14px;
+    }
+
+    .amount-label {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .amount-value {
+      font-size: 38px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+      line-height: 1.05;
+    }
+
+    .amount-value .currency {
+      font-size: 23px;
+      font-weight: 500;
+      margin-right: 4px;
+    }
+
+    .detail-item {
+      padding: 11px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #f1f4f8;
+    }
+
+    .detail-item:last-child {
+      border-bottom: none;
+    }
+
+    .detail-label {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .detail-value {
+      font-size: 14px;
+      color: var(--text-primary);
+      text-align: right;
+      max-width: 210px;
+      word-break: break-all;
+    }
+
+    .powered-by {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .payment-panel {
+      width: 100%;
+      padding: 0;
+      background: transparent;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: auto;
+    }
+
+    .panel-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .section {
+      background: rgba(255, 255, 255, 0.75);
+      border-radius: 10px;
+      border: 1px solid #eceff5;
+      padding: 14px 16px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+    }
+
+    .mode-tag {
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+      border: 1px solid #dbe4ff;
+      background: #f1f0ff;
+      color: #463adf;
+    }
+
+    .field-wrap {
+      position: relative;
+      margin-bottom: 10px;
+    }
+
+    .field-prefix {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #475569;
+      font-size: 18px;
+      z-index: 1;
+    }
+
+    .amount-input {
+      width: 100%;
+      height: 44px;
+      border: 1px solid #d6dae3;
+      border-radius: 8px;
+      padding: 0 12px 0 30px;
+      font-size: 18px;
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .amount-input:focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(0, 106, 255, 0.14);
+    }
+
+    .amount-input[readonly] {
+      background: #f8fafc;
+      color: #334155;
+      cursor: not-allowed;
+    }
+
+    .amount-label-float {
+      position: absolute;
+      left: 30px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #75829a;
+      font-size: 14px;
+      pointer-events: none;
+      transition: top 0.16s ease, transform 0.16s ease, font-size 0.16s ease, color 0.16s ease;
+    }
+
+    .amount-input:focus + .amount-label-float,
+    .amount-input:not(:placeholder-shown) + .amount-label-float {
+      top: 4px;
+      transform: translateY(0);
+      font-size: 10px;
+      color: #006aff;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .warn {
+      display: none;
+      border-radius: 8px;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .pay-button {
+      width: 100%;
+      height: 44px;
+      background: var(--primary-color);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 6px 16px rgba(0, 106, 255, 0.35);
+      transition: background-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+    }
+
+    .pay-button:hover {
+      background: var(--primary-hover);
+      transform: translateY(-0.5px);
+      box-shadow: 0 8px 18px rgba(0, 106, 255, 0.45);
+    }
+
+    .pay-button:active {
+      transform: translateY(0);
+      box-shadow: 0 4px 12px rgba(0, 106, 255, 0.35);
+    }
+
+    .pay-button:disabled {
+      background: #c7d2e6;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .pay-button .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .secure-notice {
+      margin-top: 8px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .secure-notice svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    @media (max-width: 980px) {
+      body {
+        padding: 18px 14px;
+      }
+
+      .direct-shell {
+        border-left: none;
+        border-right: none;
+      }
+
+      .direct-shell {
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+
+      .direct-shell::before {
+        display: none;
+      }
+
+      .summary-panel {
+        border-bottom: 1px solid rgba(14, 30, 66, 0.08);
+        padding-bottom: 16px;
+      }
+
+      .payment-panel {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .summary-panel,
+      .payment-panel {
+        padding: 18px 14px;
+      }
+
+      .amount-value {
+        font-size: 32px;
+      }
+
+      .amount-value .currency {
+        font-size: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div
+    id="directApp"
+    class="direct-shell fx-enter"
+    data-token="<%= token %>"
+    data-mode="<%= mode %>"
+  >
+    <aside class="summary-panel">
+      <div class="merchant-info">
+        <div class="merchant-logo"><%= (merchantName || '在线支付').charAt(0) %></div>
+        <div class="merchant-name"><%= merchantName %></div>
+      </div>
+      <div class="powered-by">Powered by LunaFir</div>
+
+      <div>
+        <div class="group-title">支付摘要</div>
+        <div class="summary-block">
+          <div class="amount-label">待支付金额</div>
+          <div id="amountPreview" class="amount-value">
+            <span class="currency">¥</span><span><%= fixedAmount || '0.00' %></span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="group-title">链接信息</div>
+        <div class="summary-block">
+          <div class="detail-item">
+            <div class="detail-label">收款模式</div>
+            <div class="detail-value"><%= mode === 'fixed' ? '固定金额' : '自由输入金额' %></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">收款链接</div>
+            <div class="detail-value">/direct/<%= token %></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">链接有效期</div>
+            <div class="detail-value">
+              <%= mode === 'fixed' ? new Date(linkExpiresAt).toLocaleString('zh-CN') : '长期有效（商户可关闭）' %>
+            </div>
+          </div>
+          <% if (mode === 'fixed' && fixedReason) { %>
+          <div class="detail-item">
+            <div class="detail-label">收款理由</div>
+            <div class="detail-value"><%= fixedReason %></div>
+          </div>
+          <% } %>
+        </div>
+      </div>
+
+    </aside>
+
+    <main class="payment-panel">
+      <h2 class="panel-title">确认付款</h2>
+
+      <div class="section" id="payMethodSection">
+        <div class="mode-tag"><%= mode === 'fixed' ? '固定金额链接' : '默认直接收款' %></div>
+        <div class="section-title">输入金额并创建订单</div>
+
+        <div class="field-wrap">
+          <span class="field-prefix">¥</span>
+          <input
+            id="amount"
+            class="amount-input"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder=" "
+            value="<%= fixedAmount || '' %>"
+            <%= mode === 'fixed' ? 'readonly' : '' %>
+          />
+          <label for="amount" class="amount-label-float">付款金额</label>
+        </div>
+
+        <div class="hint">
+          <%= mode === 'fixed'
+            ? '该链接金额已固定，点击下方按钮后将进入收银台选择支付方式。'
+            : '你输入金额后将自动创建订单，并跳转到收银台页面选择支付方式。' %>
+        </div>
+      </div>
+
+      <div id="warn" class="warn"></div>
+
+      <button class="pay-button" id="submitBtn">
+        <span>支付</span>
+      </button>
+
+      <div class="secure-notice">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span>此支付页面受 TLS 加密保护</span>
+      </div>
+    </main>
+  </div>
+
+  <%- include('partials/checkout-shared-script') %>
+  <script>
+    (function () {
+      var appEl = document.getElementById('directApp');
+      var token = appEl ? appEl.dataset.token : '';
+      var mode = appEl ? appEl.dataset.mode : '';
+      var amountInput = document.getElementById('amount');
+      var amountPreview = document.getElementById('amountPreview');
+      var submitBtn = document.getElementById('submitBtn');
+      var warnEl = document.getElementById('warn');
+
+      function showWarn(msg) {
+        window.CheckoutUI.showWarn(warnEl, msg);
+      }
+
+      function hideWarn() {
+        window.CheckoutUI.hideWarn(warnEl);
+      }
+
+      function updateAmountPreview() {
+        var text = window.CheckoutUI.normalizeAmountText(amountInput.value);
+        amountPreview.innerHTML = '<span class="currency">¥</span><span>' + text + '</span>';
+      }
+
+      function setButtonLoading() {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<div class="spinner"></div><span>处理中...</span>';
+      }
+
+      function resetButton() {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span>支付</span>';
+      }
+
+      if (mode !== 'fixed') {
+        amountInput.addEventListener('input', updateAmountPreview);
+        updateAmountPreview();
+      }
+
+      submitBtn.addEventListener('click', async function () {
+        hideWarn();
+        var amount = (amountInput.value || '').trim();
+
+        if (!amount || Number(amount) <= 0) {
+          showWarn('请输入正确的付款金额');
+          return;
+        }
+
+        setButtonLoading();
+
+        try {
+          var res = await fetch('/api/pay/direct/create-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token, mode: mode, money: amount })
+          });
+
+          var data = await res.json();
+          if (data.code !== 0) {
+            showWarn(data.msg || '创建订单失败');
+            resetButton();
+            return;
+          }
+
+          if (data.data && data.data.success_url) {
+            window.location.href = data.data.success_url;
+            return;
+          }
+
+          window.location.href = data.data.cashier_url;
+        } catch (error) {
+          showWarn('系统繁忙，请稍后重试');
+          resetButton();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

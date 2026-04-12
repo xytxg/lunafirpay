@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <%- include('partials/checkout-shared-style') %>
   <style>
     :root {
       --primary-color: #006aff;
@@ -26,28 +27,24 @@
     
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: #f5f5f7;
+      background: #ffffff;
       min-height: 100vh;
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding: 32px 16px;
+      padding: 34px 16px;
       color: var(--text-primary);
-    }
-
-    body.direct-mode {
-      display: none;
     }
 
     .checkout-shell {
       width: 100%;
-      max-width: 960px;
-      border-radius: 12px;
-      background: #ffffff;
-      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+      max-width: 980px;
+      background: transparent;
       overflow: hidden;
       animation: shellIn 200ms ease-out;
-      border: 1px solid #e5e7eb;
+      border-left: 1px solid #e6e9ef;
+      border-right: 1px solid #e6e9ef;
+      padding: 0 22px;
     }
 
     @keyframes shellIn {
@@ -56,62 +53,93 @@
     }
 
     .checkout-container {
-      display: flex;
-      background: #ffffff;
+      display: grid;
+      grid-template-columns: 340px 420px;
+      gap: 64px;
+      align-items: start;
+      position: relative;
+    }
+
+    .checkout-container::before {
+      content: '';
+      position: absolute;
+      left: 350px;
+      top: -20px;
+      bottom: -20px;
+      width: 1px;
+      background: linear-gradient(180deg, transparent 0%, #e6e9ef 18%, #e6e9ef 82%, transparent 100%);
     }
     
     /* 左侧订单信息 */
     .order-panel {
-      flex: 0 0 420px;
-      padding: 32px 32px 28px;
-      border-right: 1px solid #edf0f4;
-      background: #ffffff;
+      padding: 8px 0;
+      border-right: none;
+      background: transparent;
       display: flex;
       flex-direction: column;
+      gap: 18px;
     }
     
     .merchant-info {
       display: flex;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 28px;
+      gap: 12px;
     }
 
     .merchant-logo {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
-      background: #f5f5f7;
+      font-size: 16px;
+      background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+      color: #3f3a9f;
+      font-weight: 700;
     }
 
     .merchant-name {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 600;
     }
     
-    .order-amount {
-      margin-bottom: 28px;
-    }
-
-    .amount-label {
-      font-size: 14px;
-      color: var(--text-secondary);
+    .group-title {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: #61708a;
+      text-transform: uppercase;
+      font-weight: 600;
       margin-bottom: 10px;
     }
 
+    .summary-block {
+      border-radius: 12px;
+      border: 1px solid #eceff5;
+      background: rgba(255, 255, 255, 0.75);
+      padding: 14px;
+    }
+
+    .order-amount {
+      margin-bottom: 0;
+    }
+
+    .amount-label {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
     .amount-value {
-      font-size: 36px;
+      font-size: 38px;
       font-weight: 600;
       letter-spacing: -0.03em;
       color: var(--text-primary);
+      line-height: 1.05;
     }
 
     .amount-value .currency {
-      font-size: 24px;
+      font-size: 23px;
       font-weight: 500;
       margin-right: 4px;
     }
@@ -121,10 +149,11 @@
     }
 
     .detail-item {
-      padding: 12px 0;
+      padding: 11px 0;
       display: flex;
       justify-content: space-between;
       align-items: center;
+      border-bottom: 1px solid #f1f4f8;
     }
     
     .detail-item:last-child {
@@ -140,38 +169,38 @@
       font-size: 14px;
       color: var(--text-primary);
       text-align: right;
-      max-width: 180px;
+      max-width: 210px;
       word-break: break-all;
     }
     
     .powered-by {
-      margin-top: auto;
-      padding-top: 24px;
       font-size: 11px;
       color: var(--text-secondary);
     }
     
     /* 右侧支付方式 */
     .payment-panel {
-      flex: 1;
-      padding: 32px 32px 28px;
-      background: #f7f7f9;
+      width: 100%;
+      padding: 0;
+      background: transparent;
       display: flex;
       flex-direction: column;
       gap: 16px;
+      min-height: auto;
     }
 
     .panel-title {
       font-size: 18px;
       font-weight: 600;
-      margin-bottom: 18px;
+      margin-bottom: 2px;
     }
 
     .section {
-      background: #ffffff;
+      background: rgba(255, 255, 255, 0.75);
       border-radius: 10px;
-      border: 1px solid #eaedf3;
+      border: 1px solid #eceff5;
       padding: 14px 16px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
     }
 
     .section-title {
@@ -384,6 +413,52 @@
       color: #10b981;
     }
 
+    .qrcode-jump-btn {
+      display: none;
+      margin-top: 12px;
+      width: 100%;
+      padding: 12px;
+      background: #1677ff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #fff;
+      text-decoration: none;
+      text-align: center;
+      transition: background 0.2s;
+    }
+
+    .qrcode-jump-btn:hover {
+      background: #0958d9;
+    }
+
+    .qrcode-mobile-actions {
+      display: none;
+      margin-top: 10px;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .qrcode-action-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 11px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      border: 1px solid #d9e2ef;
+      background: #f8fbff;
+      color: #1f3b62;
+      cursor: pointer;
+    }
+
+    .qrcode-action-btn:hover {
+      background: #eef4ff;
+    }
+
     /* 支付宝H5唤起APP样式 */
     .alipay-h5-wrapper {
       background: linear-gradient(135deg, #1677ff 0%, #0958d9 100%);
@@ -504,34 +579,49 @@
     }
     
     /* 响应式 */
-    @media (max-width: 768px) {
+    @media (max-width: 980px) {
       body {
-        padding: 16px 0;
-        background: #f3f5fa;
+        padding: 18px 14px;
+        background: #ffffff;
       }
 
       .checkout-shell {
-        border-radius: 0;
-        box-shadow: none;
+        border-left: none;
+        border-right: none;
       }
 
       .checkout-container {
-        flex-direction: column;
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+
+      .checkout-container::before {
+        display: none;
       }
 
       .order-panel {
-        flex: none;
-        padding: 20px 16px 16px;
         border-right: none;
-        border-bottom: 1px solid #edf0f4;
-      }
-
-      .amount-value {
-        font-size: 30px;
+        border-bottom: 1px solid rgba(14, 30, 66, 0.08);
+        padding-bottom: 16px;
       }
 
       .payment-panel {
-        padding: 20px 16px 16px;
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .order-panel,
+      .payment-panel {
+        padding: 18px 14px;
+      }
+
+      .amount-value {
+        font-size: 32px;
+      }
+
+      .amount-value .currency {
+        font-size: 20px;
       }
     }
   </style>
@@ -542,42 +632,49 @@
     <!-- 左侧订单信息 -->
     <div class="order-panel">
       <div class="merchant-info">
+        <div class="merchant-logo"><%= (sitename || '在线支付').charAt(0) %></div>
         <div class="merchant-name"><%= sitename || '在线支付' %></div>
       </div>
+      <div class="powered-by">Powered by LunaFir</div>
       
-      <div class="order-amount">
-        <div class="amount-label">向 <%= sitename || '商户' %> 支付</div>
-        <div class="amount-value">
-          <% if (typeof isCrypto !== 'undefined' && isCrypto) { %>
-            <span class="currency">¥</span><%= parseFloat(order.money).toFixed(2) %>
-          <% } else { %>
-            <span class="currency">¥</span><%= parseFloat(order.money).toFixed(2) %>
-          <% } %>
+      <div>
+        <div class="group-title">支付摘要</div>
+        <div class="summary-block">
+          <div class="order-amount">
+            <div class="amount-label">向 <%= sitename || '商户' %> 支付</div>
+            <div class="amount-value">
+              <% if (typeof isCrypto !== 'undefined' && isCrypto) { %>
+                <span class="currency">¥</span><%= parseFloat(order.money).toFixed(2) %>
+              <% } else { %>
+                <span class="currency">¥</span><%= parseFloat(order.money).toFixed(2) %>
+              <% } %>
+            </div>
+          </div>
         </div>
       </div>
       
-      <div class="order-details">
-        <div class="detail-item">
-          <span class="detail-label">商品名称</span>
-          <span class="detail-value"><%= order.display_name || order.name %></span>
-        </div>
-        <div class="detail-item">
-          <span class="detail-label">订单号</span>
-          <span class="detail-value"><%= order.trade_no %></span>
-        </div>
-        <div class="detail-item">
-          <span class="detail-label">商户订单号</span>
-          <span class="detail-value"><%= order.out_trade_no %></span>
-        </div>
-        <div class="detail-item">
-          <span class="detail-label">创建时间</span>
-          <span class="detail-value"><%= new Date(order.created_at).toLocaleString('zh-CN') %></span>
+      <div>
+        <div class="group-title">订单信息</div>
+        <div class="summary-block order-details">
+          <div class="detail-item">
+            <span class="detail-label">商品名称</span>
+            <span class="detail-value"><%= order.display_name || order.name %></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">订单号</span>
+            <span class="detail-value"><%= order.trade_no %></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">商户订单号</span>
+            <span class="detail-value"><%= order.out_trade_no %></span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">创建时间</span>
+            <span class="detail-value"><%= new Date(order.created_at).toLocaleString('zh-CN') %></span>
+          </div>
         </div>
       </div>
       
-      <div class="powered-by">
-        Powered by LunaFir
-      </div>
     </div>
     
     <!-- 右侧支付方式 + 二维码 -->
@@ -656,6 +753,11 @@
               </svg>
               <span id="qrcodeTipText">请使用对应APP扫描二维码完成支付</span>
             </div>
+            <a href="javascript:;" id="qrcodeJumpBtn" class="qrcode-jump-btn">跳转到支付</a>
+            <div id="qrcodeMobileActions" class="qrcode-mobile-actions">
+              <a href="javascript:;" id="qrcodeSaveBtn" class="qrcode-action-btn" target="_blank" rel="noopener">保存二维码</a>
+              <a href="javascript:;" id="qrcodeCopyBtn" class="qrcode-action-btn">复制链接</a>
+            </div>
           </div>
           
           <!-- 支付宝H5唤起APP -->
@@ -682,6 +784,7 @@
     </div>
   </div>
 
+  <%- include('partials/checkout-shared-script') %>
   <script>
     (function() {
       var selectedType = '<%= order.pay_type || "" %>';
@@ -739,21 +842,132 @@
       var qrcodeStatus = document.getElementById('qrcodeStatus');
       var qrcodeCountdown = document.getElementById('qrcodeCountdown');
       var expireTimeEl = document.getElementById('expireTime');
+      var qrcodeJumpBtn = document.getElementById('qrcodeJumpBtn');
+      var qrcodeMobileActions = document.getElementById('qrcodeMobileActions');
+      var qrcodeSaveBtn = document.getElementById('qrcodeSaveBtn');
+      var qrcodeCopyBtn = document.getElementById('qrcodeCopyBtn');
       var qrcodeBackBtn = document.getElementById('qrcodeBackBtn');
       var payMethodSection = document.getElementById('payMethodSection');
       var secureNotice = document.querySelector('.secure-notice');
       var checkInterval = null;
       var countdownInterval = null;
       var expireTimestamp = null;  // 过期时间戳
+      var currentQrcodeRawUrl = '';
+      var currentQrcodeImageUrl = '';
       var returnUrl = '<%= order.return_url || "" %>';
       var alipayH5Wrapper = document.getElementById('alipayH5Wrapper');
       var alipayH5SchemeUrl = null;  // 支付宝H5协议URL
+
+      function isMobileClient() {
+        var shortEdge = Math.min(window.innerWidth || 0, window.innerHeight || 0);
+        return shortEdge > 0 && shortEdge <= 900;
+      }
+
+      function resolvePayAppName(typeCode) {
+        var code = (typeCode || '').toLowerCase();
+        if (code.indexOf('alipay') !== -1 || code === 'alipay') return '支付宝';
+        if (code.indexOf('wx') !== -1 || code.indexOf('wechat') !== -1) return '微信';
+        if (code.indexOf('union') !== -1 || code.indexOf('ysf') !== -1 || code.indexOf('quickpass') !== -1) return '云闪付';
+        if (code.indexOf('jd') !== -1 || code.indexOf('jdpay') !== -1) return '京东';
+        return '去支付';
+      }
+
+      function detectQrcodeUrlType(qrcodeUrl) {
+        var url = (qrcodeUrl || '').trim();
+        if (!url) return 'unknown';
+        var lower = url.toLowerCase();
+        if (lower.indexOf('://') > 0 && !/^https?:\/\//.test(lower)) return 'scheme';
+        if (/^https?:\/\//.test(lower)) {
+          if (lower.indexOf('qr.alipay.com') !== -1) return 'image';
+          if (/\.(png|jpg|jpeg|gif|webp)(\?|$)/.test(lower)) return 'image';
+          return 'link';
+        }
+        return 'link';
+      }
+
+      function buildQrcodeJumpUrl(qrcodeUrl, typeCode) {
+        var rawUrl = (qrcodeUrl || '').trim();
+        if (!rawUrl) return '';
+        var urlType = detectQrcodeUrlType(rawUrl);
+        var code = (typeCode || '').toLowerCase();
+
+        if (code.indexOf('alipay') !== -1 || code === 'alipay') {
+          if (urlType === 'scheme') return rawUrl;
+          if (urlType === 'image' || urlType === 'link') {
+            return 'alipays://platformapi/startapp?saId=10000007&qrcode=' + encodeURIComponent(rawUrl);
+          }
+          return '';
+        }
+
+        if (urlType === 'scheme') return rawUrl;
+        if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
+        return '';
+      }
+
+      function isAlipayType(typeCode) {
+        var code = (typeCode || '').toLowerCase();
+        return code.indexOf('alipay') !== -1 || code === 'alipay';
+      }
+
+      function hideQrcodeMobileActions() {
+        if (!qrcodeMobileActions) return;
+        qrcodeMobileActions.style.display = 'none';
+      }
+
+      function showQrcodeMobileActions(rawUrl, imageUrl) {
+        if (!qrcodeMobileActions || !qrcodeSaveBtn || !qrcodeCopyBtn) return;
+        qrcodeSaveBtn.href = imageUrl || rawUrl || 'javascript:;';
+        qrcodeCopyBtn.setAttribute('data-copy-url', rawUrl || '');
+        qrcodeMobileActions.style.display = 'grid';
+      }
+
+      function updateQrcodeJumpButton(qrcodeUrl) {
+        if (!qrcodeJumpBtn) return;
+        hideQrcodeMobileActions();
+
+        if (!isMobileClient()) {
+          qrcodeJumpBtn.style.display = 'none';
+          qrcodeJumpBtn.removeAttribute('href');
+          return;
+        }
+
+        var appName = resolvePayAppName(selectedType);
+        var jumpUrl = buildQrcodeJumpUrl(qrcodeUrl, selectedType);
+
+        if (!isAlipayType(selectedType)) {
+          qrcodeJumpBtn.style.display = 'none';
+          qrcodeJumpBtn.removeAttribute('href');
+          showQrcodeMobileActions(currentQrcodeRawUrl, currentQrcodeImageUrl);
+          return;
+        }
+
+        if (!jumpUrl) {
+          qrcodeJumpBtn.style.display = 'none';
+          qrcodeJumpBtn.removeAttribute('href');
+          showQrcodeMobileActions(currentQrcodeRawUrl, currentQrcodeImageUrl);
+          return;
+        }
+
+        hideQrcodeMobileActions();
+
+        qrcodeJumpBtn.textContent = appName === '去支付' ? '去支付' : ('跳转到' + appName + '支付');
+        qrcodeJumpBtn.href = jumpUrl;
+        qrcodeJumpBtn.style.display = 'block';
+      }
+
+      function hideQrcodeJumpButton() {
+        if (!qrcodeJumpBtn) return;
+        qrcodeJumpBtn.style.display = 'none';
+        qrcodeJumpBtn.removeAttribute('href');
+        hideQrcodeMobileActions();
+      }
 
       // 显示支付宝H5唤起APP面板
       function showAlipayH5(schemeUrl, money) {
         if (directMode) {
           document.body.style.display = 'flex';
         }
+        hideQrcodeJumpButton();
         normalQrcodeWrapper.style.display = 'none';
         alipayH5Wrapper.style.display = 'block';
         
@@ -802,8 +1016,19 @@
         if (directMode) {
           document.body.style.display = 'flex';
         }
+        alipayH5Wrapper.style.display = 'none';
         normalQrcodeWrapper.style.display = 'block';
-        qrcodeImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(qrcodeUrl);
+
+        var urlType = detectQrcodeUrlType(qrcodeUrl);
+        currentQrcodeRawUrl = (qrcodeUrl || '').trim();
+        if (urlType === 'image') {
+          currentQrcodeImageUrl = qrcodeUrl;
+          qrcodeImg.src = qrcodeUrl;
+        } else {
+          currentQrcodeImageUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(qrcodeUrl);
+          qrcodeImg.src = currentQrcodeImageUrl;
+        }
+        updateQrcodeJumpButton(qrcodeUrl);
         var tipTextEl = document.getElementById('qrcodeTipText');
         if (tipTextEl && payTypeName) {
           tipTextEl.textContent = '请使用 ' + payTypeName + ' 扫描二维码完成支付';
@@ -838,12 +1063,12 @@
       function hideQrcode() {
         clearInterval(checkInterval);
         clearInterval(countdownInterval);
+        hideQrcodeJumpButton();
         qrcodePanel.style.display = 'none';
         normalQrcodeWrapper.style.display = 'block';
         payMethodSection.style.display = 'block';
         payBtn.style.display = 'flex';
-        payBtn.disabled = false;
-        payBtn.innerHTML = '<span>支付</span>';
+        window.CheckoutUI.resetButton(payBtn, '支付');
         secureNotice.style.display = 'flex';
       }
 
@@ -925,6 +1150,69 @@
         qrcodeBackBtn.addEventListener('click', hideQrcode);
       }
 
+      if (qrcodeJumpBtn) {
+        qrcodeJumpBtn.addEventListener('click', function(e) {
+          var target = qrcodeJumpBtn.getAttribute('href');
+          e.preventDefault();
+          if (!target || target === 'javascript:;') {
+            return;
+          }
+          window.location.href = target;
+        });
+      }
+
+      function copyText(text) {
+        if (!text) return Promise.reject(new Error('empty text'));
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+
+        return new Promise(function(resolve, reject) {
+          var input = document.createElement('input');
+          input.value = text;
+          document.body.appendChild(input);
+          input.select();
+          try {
+            var ok = document.execCommand('copy');
+            document.body.removeChild(input);
+            if (ok) {
+              resolve();
+            } else {
+              reject(new Error('copy failed'));
+            }
+          } catch (err) {
+            document.body.removeChild(input);
+            reject(err);
+          }
+        });
+      }
+
+      if (qrcodeCopyBtn) {
+        qrcodeCopyBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          var link = qrcodeCopyBtn.getAttribute('data-copy-url') || currentQrcodeRawUrl;
+          if (!link) {
+            alert('暂无可复制链接');
+            return;
+          }
+          copyText(link)
+            .then(function() {
+              alert('复制成功');
+            })
+            .catch(function() {
+              alert('复制失败，请手动复制');
+            });
+        });
+      }
+
+      if (qrcodeSaveBtn) {
+        qrcodeSaveBtn.addEventListener('click', function() {
+          if (!qrcodeSaveBtn.href || qrcodeSaveBtn.href === 'javascript:;') {
+            qrcodeSaveBtn.href = currentQrcodeImageUrl || currentQrcodeRawUrl || 'javascript:;';
+          }
+        });
+      }
+
       // 支付按钮
       var payBtn = document.getElementById('payBtn');
       async function triggerPay(silentMode) {
@@ -934,8 +1222,7 @@
         }
 
         if (!silentMode) {
-          payBtn.disabled = true;
-          payBtn.innerHTML = '<div class="spinner"></div><span>处理中...</span>';
+          window.CheckoutUI.setButtonLoading(payBtn, '处理中...');
         } else {
           payBtn.disabled = true;
         }
@@ -956,8 +1243,7 @@
               var errorText = await res.text(); // 获取非 JSON 的错误信息
               console.error('Server Error:', res.status, errorText);
               alert('服务器错误 (' + res.status + ')，请联系管理员');
-              payBtn.disabled = false;
-              payBtn.innerHTML = '<span>支付</span>';
+              window.CheckoutUI.resetButton(payBtn, '支付');
               return;
           }
 
@@ -979,7 +1265,7 @@
               // 普通支付二维码 - 在当前页面显示（优先于跳转）
               var activeMethod = document.querySelector('.payment-method.active');
               var payTypeName = activeMethod ? activeMethod.querySelector('.method-name').textContent : '';
-              showQrcode(data.qrcode, payTypeName);
+              showQrcode(data.qrcode, payTypeName, data.expire_time);
             } else if (data.pay_url) {
               // 普通支付 - 跳转到支付页面
               window.location.href = data.pay_url;
@@ -989,8 +1275,7 @@
               document.body.style.display = 'flex';
             }
             alert(data.msg || '支付失败，请稍后重试');
-            payBtn.disabled = false;
-            payBtn.innerHTML = '<span>支付</span>';
+            window.CheckoutUI.resetButton(payBtn, '支付');
           }
         } catch (e) {
           console.error('Payment Error:', e);
@@ -998,8 +1283,7 @@
             document.body.style.display = 'flex';
           }
           alert('网络错误或数据解析失败，请稍后重试');
-          payBtn.disabled = false;
-          payBtn.innerHTML = '<span>支付</span>';
+          window.CheckoutUI.resetButton(payBtn, '支付');
         }
       }
 

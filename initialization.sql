@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS `users` (
   `username` varchar(50) NOT NULL COMMENT '用户名',
   `password` varchar(255) NOT NULL COMMENT '密码',
   `email` varchar(100) NOT NULL COMMENT '邮箱',
+  `merchant_name` varchar(16) DEFAULT NULL COMMENT '商户名称（收款页展示）',
+  `direct_pay_token` varchar(24) DEFAULT NULL COMMENT '商户默认直接收款Token（24位，启用后固定）',
+  `direct_pay_enabled` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否启用默认直接收款链接',
   `is_admin` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否是管理员',
   `telegram_bindings` json DEFAULT NULL,
   `status` tinyint(1) DEFAULT '1' COMMENT '状态：1启用 0禁用',
@@ -21,6 +24,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_username` (`username`),
+  UNIQUE KEY `uk_users_direct_pay_token` (`direct_pay_token`),
   KEY `idx_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
@@ -165,6 +169,24 @@ CREATE TABLE IF NOT EXISTS `merchant_announcements` (
   KEY `idx_enabled_sort` (`is_enabled`,`sort_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商户公告表';
 
+-- 商户直接收款固定链接表
+CREATE TABLE IF NOT EXISTS `direct_links` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `merchant_user_id` int NOT NULL COMMENT '商户 users.id',
+  `token` varchar(32) NOT NULL COMMENT '固定金额直链Token（32位）',
+  `fixed_amount` decimal(10,2) NOT NULL COMMENT '固定金额',
+  `expire_hours` tinyint unsigned NOT NULL COMMENT '有效期小时（1-24）',
+  `reason` varchar(255) DEFAULT NULL COMMENT '收款理由（可选）',
+  `expires_at` datetime NOT NULL COMMENT '链接过期时间',
+  `is_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否启用',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_direct_links_token` (`token`),
+  KEY `idx_direct_links_merchant` (`merchant_user_id`),
+  KEY `idx_direct_links_expires` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商户直接收款固定链接表';
+
 -- ==================== 订单相关表 ====================
 
 -- 订单表
@@ -191,6 +213,10 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `buyer` varchar(64) DEFAULT NULL,
   `status` tinyint(1) DEFAULT '0' COMMENT '状态：0未支付 1已支付 2已关闭 3退款中 4已退款',
   `order_type` varchar(20) DEFAULT 'normal',
+  `direct_mode` enum('none','default','fixed') DEFAULT 'none' COMMENT '直接收款模式',
+  `direct_link_id` int DEFAULT NULL COMMENT '固定链接ID',
+  `direct_token` varchar(32) DEFAULT NULL COMMENT '直接收款Token快照',
+  `expire_at` datetime DEFAULT NULL COMMENT '订单过期时间（固定直链订单使用）',
   `crypto_pid` varchar(20) DEFAULT NULL,
   `notify_status` tinyint(1) DEFAULT '0' COMMENT '通知状态: 0=未通知, 1=已通知',
   `notify_count` int DEFAULT '0',
@@ -210,6 +236,8 @@ CREATE TABLE IF NOT EXISTS `orders` (
   KEY `idx_merchant_id` (`merchant_id`),
   KEY `idx_out_trade_no` (`out_trade_no`),
   KEY `idx_status` (`status`),
+  KEY `idx_direct_link_id` (`direct_link_id`),
+  KEY `idx_expire_at` (`expire_at`),
   KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';
 
@@ -438,6 +466,64 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- 为 direct_links 表添加 reason 列（如果不存在）
+SET @tablename = 'direct_links';
+SET @columnname = 'reason';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` varchar(255) DEFAULT NULL COMMENT ''收款理由（可选）'' AFTER `expire_hours`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 users 表添加 merchant_name 列（如果不存在）
+SET @sql = (SELECT IF(
+  NOT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'merchant_name'),
+  "ALTER TABLE users ADD COLUMN `merchant_name` VARCHAR(16) DEFAULT NULL COMMENT '商户名称（收款页展示）' AFTER `email`",
+  'SELECT 1'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 users 表添加 direct_pay_token 列（如果不存在）
+SET @sql = (SELECT IF(
+  NOT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'direct_pay_token'),
+  "ALTER TABLE users ADD COLUMN `direct_pay_token` VARCHAR(24) DEFAULT NULL COMMENT '商户默认直接收款Token（24位，启用后固定）' AFTER `email`",
+  'SELECT 1'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 users 表添加 direct_pay_enabled 列（如果不存在）
+SET @sql = (SELECT IF(
+  NOT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'direct_pay_enabled'),
+  "ALTER TABLE users ADD COLUMN `direct_pay_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否启用默认直接收款链接' AFTER `direct_pay_token`",
+  'SELECT 1'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 users.direct_pay_token 添加唯一索引（如果不存在）
+SET @sql = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND INDEX_NAME = 'uk_users_direct_pay_token'
+  ),
+  'SELECT 1',
+  'ALTER TABLE users ADD UNIQUE KEY `uk_users_direct_pay_token` (`direct_pay_token`)'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- merchant_announcements 表增量补列（存在则跳过）
 SET @tablename = 'merchant_announcements';
 
@@ -450,6 +536,98 @@ SET @preparedStatement = (SELECT IF(
 PREPARE stmt FROM @preparedStatement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表添加 direct_mode 列（如果不存在）
+SET @tablename = 'orders';
+SET @columnname = 'direct_mode';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` enum(''none'',''default'',''fixed'') DEFAULT ''none'' COMMENT ''直接收款模式'' AFTER `order_type`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表添加 direct_link_id 列（如果不存在）
+SET @tablename = 'orders';
+SET @columnname = 'direct_link_id';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` int DEFAULT NULL COMMENT ''固定链接ID'' AFTER `direct_mode`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表添加 direct_token 列（如果不存在）
+SET @tablename = 'orders';
+SET @columnname = 'direct_token';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` varchar(32) DEFAULT NULL COMMENT ''直接收款Token快照'' AFTER `direct_link_id`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表添加 expire_at 列（如果不存在）
+SET @tablename = 'orders';
+SET @columnname = 'expire_at';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` datetime DEFAULT NULL COMMENT ''订单过期时间（固定直链订单使用）'' AFTER `direct_token`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表补充 direct_link_id 索引（如果不存在）
+SET @sql = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND INDEX_NAME = 'idx_direct_link_id'
+  ),
+  'SELECT 1',
+  'ALTER TABLE orders ADD INDEX `idx_direct_link_id` (`direct_link_id`)'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 orders 表补充 expire_at 索引（如果不存在）
+SET @sql = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND INDEX_NAME = 'idx_expire_at'
+  ),
+  'SELECT 1',
+  'ALTER TABLE orders ADD INDEX `idx_expire_at` (`expire_at`)'
+));
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 补建 direct_links 表（幂等）
+CREATE TABLE IF NOT EXISTS `direct_links` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `merchant_user_id` int NOT NULL COMMENT '商户 users.id',
+  `token` varchar(32) NOT NULL COMMENT '固定金额直链Token（32位）',
+  `fixed_amount` decimal(10,2) NOT NULL COMMENT '固定金额',
+  `expire_hours` tinyint unsigned NOT NULL COMMENT '有效期小时（1-24）',
+  `reason` varchar(255) DEFAULT NULL COMMENT '收款理由（可选）',
+  `expires_at` datetime NOT NULL COMMENT '链接过期时间',
+  `is_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否启用',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_direct_links_token` (`token`),
+  KEY `idx_direct_links_merchant` (`merchant_user_id`),
+  KEY `idx_direct_links_expires` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商户直接收款固定链接表';
 
 -- 修复 orders.merchant_id 约束：旧库若为 NOT NULL，则自动改为可空（不清历史数据）
 SET @sql = (SELECT IF(
@@ -467,6 +645,9 @@ SET @sql = (SELECT IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+-- 前面可能修改过 @tablename，这里强制重置为 merchant_announcements，避免误操作到 orders
+SET @tablename = 'merchant_announcements';
 
 SET @columnname = 'content';
 SET @preparedStatement = (SELECT IF(

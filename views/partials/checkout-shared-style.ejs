@@ -1,0 +1,75 @@
+<style>
+  /* Shared checkout style tokens and effects */
+  :root {
+    --stripe-ink: #0a2540;
+    --stripe-muted: #425466;
+    --stripe-bg-1: #eef4ff;
+    --stripe-bg-2: #f8fbff;
+    --stripe-accent: #635bff;
+    --stripe-accent-hover: #574dff;
+  }
+
+  @keyframes checkoutFadeSlide {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes stripeGlowFloat {
+    0% { transform: translate3d(0, 0, 0); }
+    50% { transform: translate3d(0, -8px, 0); }
+    100% { transform: translate3d(0, 0, 0); }
+  }
+
+  .fx-enter {
+    animation: checkoutFadeSlide 260ms ease-out;
+  }
+
+  /* Optional Stripe-like surface: only enabled when body has class stripe-checkout */
+  body.stripe-checkout {
+    background: radial-gradient(1200px 420px at 20% -10%, #dfe8ff 0%, transparent 58%),
+                radial-gradient(1000px 380px at 100% 0%, #ecebff 0%, transparent 55%),
+                linear-gradient(180deg, var(--stripe-bg-1) 0%, var(--stripe-bg-2) 100%);
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  body.stripe-checkout::before,
+  body.stripe-checkout::after {
+    content: '';
+    position: fixed;
+    border-radius: 999px;
+    z-index: 0;
+    pointer-events: none;
+    filter: blur(10px);
+    opacity: 0.35;
+    animation: stripeGlowFloat 6s ease-in-out infinite;
+  }
+
+  body.stripe-checkout::before {
+    width: 260px;
+    height: 260px;
+    left: -90px;
+    top: 120px;
+    background: #c7d2fe;
+  }
+
+  body.stripe-checkout::after {
+    width: 320px;
+    height: 320px;
+    right: -140px;
+    top: 280px;
+    background: #bfdbfe;
+    animation-delay: 0.8s;
+  }
+
+  body.stripe-checkout .checkout-shell {
+    position: relative;
+    z-index: 1;
+  }
+</style>
