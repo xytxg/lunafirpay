@@ -19,9 +19,10 @@ router.get('/orders', requireMerchantRamPermission('order'), async (req, res) =>
     
     // 只输出商户需要的字段
     let sql = `SELECT o.id, o.trade_no, o.out_trade_no, o.pay_type, o.name, 
-               o.money, o.fee_money, o.fee_payer, o.notify_url, o.return_url, 
-               o.status, o.created_at, o.paid_at, o.refund_status, o.refund_money,
-               o.notify_status, o.notify_count, o.notify_time, o.merchant_confirm, o.order_type
+           o.money, o.real_money, o.fee_money, o.fee_payer, o.notify_url, o.return_url, 
+           o.status, o.created_at, o.paid_at, o.refund_status, o.refund_money,
+           o.notify_status, o.notify_count, o.notify_time, o.merchant_confirm, o.order_type,
+           o.direct_mode, o.direct_token, o.expire_at
                FROM orders o
                WHERE o.merchant_id = ?`;
     const params = [user_id];
@@ -56,10 +57,26 @@ router.get('/orders', requireMerchantRamPermission('order'), async (req, res) =>
     params.push(parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize));
     const [orders] = await db.query(sql, params);
 
+    // 直接收款订单不依赖下游回调：对前端输出统一语义字段，避免展示“已支付未回调/未成功”。
+    const normalizedOrders = orders.map((order) => {
+      const isDirectOrder = order.direct_mode && order.direct_mode !== 'none';
+      const callbackRequired = !isDirectOrder && !!order.notify_url;
+      const effectiveNotifyStatus = callbackRequired
+        ? Number(order.notify_status || 0)
+        : (Number(order.status) === 1 ? 1 : 0);
+
+      return {
+        ...order,
+        callback_required: callbackRequired ? 1 : 0,
+        effective_notify_status: effectiveNotifyStatus,
+        reconcile_allowed: isDirectOrder ? 0 : 1
+      };
+    });
+
     res.json({
       code: 0,
       data: {
-        list: orders,
+        list: normalizedOrders,
         total,
         page: parseInt(page),
         pageSize: parseInt(pageSize)
@@ -346,89 +363,7 @@ router.post('/refund/query', requireMerchantRamPermission('finance'), async (req
 
 // 普通订单强制回调（商户认账）（需要 order 权限）
 router.post('/orders/notify', requireMerchantRamPermission('order'), async (req, res) => {
-  try {
-    const { user_id } = req.user;
-    const merchant = req.merchant;
-    const { tradeNo } = req.body;
-
-    if (!tradeNo) {
-      return res.json({ code: -1, msg: '缺少订单号' });
-    }
-
-    // 查询普通订单
-    const [orders] = await db.query(
-      'SELECT * FROM orders WHERE trade_no = ? AND merchant_id = ?',
-      [tradeNo, user_id]
-    );
-
-    if (orders.length === 0) {
-      return res.json({ code: -1, msg: '订单不存在' });
-    }
-
-    const order = orders[0];
-
-    // 检查订单状态：未支付或已过期的订单可以商户认账
-    if (order.status !== 0 && order.status !== 2) {
-      return res.json({ code: -1, msg: '只有未支付或已过期订单可以商户认账回调' });
-    }
-
-    if (!order.notify_url) {
-      return res.json({ code: -1, msg: '订单未设置回调地址' });
-    }
-
-    // 标记为商户确认（认账），同时将状态改为未支付(0)以便后续状态显示正确
-    await db.query(
-      'UPDATE orders SET merchant_confirm = 1, status = 0 WHERE id = ?',
-      [order.id]
-    );
-
-    // 获取商户PID（单服务商模式：直接使用 merchants.pid）
-    const [providerMerchants] = await db.query(
-      'SELECT pid FROM merchants WHERE user_id = ? LIMIT 1',
-      [user_id]
-    );
-
-    if (providerMerchants.length === 0) {
-      return res.json({ code: -1, msg: '商户信息不存在' });
-    }
-
-    const pm = providerMerchants[0];
-    
-    // 构建回调参数（模拟支付成功）
-    const notifyOrder = { ...order, status: 1 };  // 模拟已支付状态
-    const notifyParams = {
-      pid: pm.pid,
-      trade_no: order.trade_no,
-      out_trade_no: order.out_trade_no,
-      type: order.pay_type || 'unknown',
-      name: order.name || '',
-      money: parseFloat(order.money).toFixed(2),
-      trade_status: 'TRADE_SUCCESS'
-    };
-    
-    // 使用商户自己的 api_key 签名
-    const { makeSign } = require('../../utils/payment');
-    notifyParams.sign = makeSign(notifyParams, merchant.api_key);
-    notifyParams.sign_type = 'MD5';
-
-    // 发送回调
-    const success = await sendNotify(order.notify_url, notifyParams);
-    
-    // 更新回调状态
-    await db.query(
-      'UPDATE orders SET notify_status = ?, notify_count = notify_count + 1, notify_time = NOW() WHERE id = ?',
-      [success ? 1 : 2, order.id]
-    );
-
-    if (success) {
-      res.json({ code: 0, msg: '认账成功，回调已送达' });
-    } else {
-      res.json({ code: 0, msg: '认账成功，但回调失败，请稍后重试回调' });
-    }
-  } catch (error) {
-    console.error('普通订单回调错误:', error);
-    res.json({ code: -1, msg: '操作失败: ' + error.message });
-  }
+  return res.json({ code: -1, msg: '商户认账功能已下线' });
 });
 
 // 已支付普通订单重发回调（需要 order 权限）
@@ -453,6 +388,11 @@ router.post('/orders/resend-notify', requireMerchantRamPermission('order'), asyn
     }
 
     const order = orders[0];
+
+    // 直接收款订单没有下游回调，不允许重发。
+    if (order.direct_mode && order.direct_mode !== 'none') {
+      return res.json({ code: -1, msg: '直接收款订单无需回调' });
+    }
 
     // 检查订单状态：已支付的订单，或已认账的订单可以重发回调
     if (order.status !== 1 && !(order.status === 0 && order.merchant_confirm === 1)) {

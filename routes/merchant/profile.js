@@ -12,6 +12,10 @@ const { requireMerchantMainAccount, requireMerchantRamPermission } = require('..
 
 const isEnabledStatus = (status) => status === 'active' || status === 'approved';
 
+function getDisplayLength(value) {
+  return Array.from(value || '').reduce((sum, ch) => sum + (ch.charCodeAt(0) > 127 ? 2 : 1), 0);
+}
+
 // 获取个人资料（RAM 子账户可访问，但只能看到有限信息用于修改密码）
 router.get('/profile', async (req, res) => {
   try {
@@ -33,7 +37,7 @@ router.get('/profile', async (req, res) => {
     }
 
     const [users] = await db.query(
-      'SELECT id, username, email, created_at FROM users WHERE id = ?',
+      'SELECT id, username, email, merchant_name, created_at FROM users WHERE id = ?',
       [user_id]
     );
 
@@ -88,7 +92,16 @@ router.get('/profile', async (req, res) => {
 router.post('/profile', requireMerchantMainAccount, async (req, res) => {
   try {
     const { user_id } = req.user;
-    const { email } = req.body;
+    const { email, merchant_name } = req.body;
+
+    if (merchant_name !== undefined) {
+      const merchantName = String(merchant_name || '').trim();
+      if (merchantName && getDisplayLength(merchantName) > 16) {
+        return res.json({ code: -1, msg: '商户名称不能超过16个字符（中文按2个字符计算）' });
+      }
+
+      await db.query('UPDATE users SET merchant_name = ? WHERE id = ?', [merchantName || null, user_id]);
+    }
 
     if (email) {
       // 检查邮箱是否被其他用户使用

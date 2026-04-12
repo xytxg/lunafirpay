@@ -24,6 +24,7 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
                o.money, o.fee_money as fee, o.notify_url, o.return_url,
                o.status, o.order_type, o.created_at, o.paid_at, 
                o.notify_status, o.notify_count, o.notify_time, o.merchant_confirm,
+               o.direct_mode,
                o.refund_status, o.refund_money, o.refund_no, o.refund_at, o.refund_reason,
                u.username as merchant_name,
                pc.channel_name as channel_name, pc.plugin_name as channel_plugin
@@ -84,7 +85,23 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
     sql += ' ORDER BY o.created_at DESC LIMIT ? OFFSET ?';
     const queryParams = [...params, parseInt(pageSize), (parseInt(page) - 1) * parseInt(pageSize)];
 
-    const [orders] = await db.query(sql, queryParams);
+    const [rawOrders] = await db.query(sql, queryParams);
+    const orders = rawOrders.map((order) => {
+      const isDirectOrder = order.direct_mode && order.direct_mode !== 'none';
+      const callbackRequired = !isDirectOrder && !!order.notify_url;
+      const effectiveNotifyStatus = callbackRequired
+        ? Number(order.notify_status || 0)
+        : (Number(order.status) === 1 ? 1 : 0);
+      const confirmPaymentRequired = Number(order.status) === 1
+        && (Number(order.merchant_confirm || 0) === 1 || (callbackRequired && effectiveNotifyStatus !== 1));
+
+      return {
+        ...order,
+        callback_required: callbackRequired ? 1 : 0,
+        effective_notify_status: effectiveNotifyStatus,
+        confirm_payment_required: confirmPaymentRequired ? 1 : 0
+      };
+    });
 
     res.json({
       code: 0,
@@ -192,16 +209,15 @@ router.post('/orders/force-complete', requireProviderRamPermission('order'), asy
       }
     }
 
-    res.json({ code: 0, msg: order.merchant_confirm === 1 ? '订单已确认支付' : '订单已强制完成' });
+    res.json({ code: 0, msg: order.merchant_confirm === 1 ? '确认支付成功' : '订单已强制完成' });
   } catch (error) {
     console.error('强制完成订单错误:', error);
     res.json({ code: -1, msg: '操作失败' });
   }
 });
 
-// 重发回调（已支付订单）（需要 order 权限）
-// 服务商点击回调 = 确认支付成功，如果商户之前认账了，则标记为正常入账
-router.post('/orders/notify', requireProviderRamPermission('order'), async (req, res) => {
+// 确认支付（已支付订单）（需要 order 权限）
+async function confirmPaymentHandler(req, res) {
   try {
     const { trade_no } = req.body;
 
@@ -226,16 +242,23 @@ router.post('/orders/notify', requireProviderRamPermission('order'), async (req,
       return res.json({ code: -1, msg: '只有已支付订单可以重发回调' });
     }
 
-    if (!order.notify_url) {
-      return res.json({ code: -1, msg: '订单未设置回调地址' });
-    }
+    const isDirectOrder = order.direct_mode && order.direct_mode !== 'none';
 
-    // 如果商户之前认账了（merchant_confirm=1），服务商点击回调后清除认账标记，变成正常入账
+    // 如果商户之前认账了，服务商确认支付后清除认账标记，变成正常入账
     if (order.merchant_confirm === 1) {
       await db.query(
         'UPDATE orders SET merchant_confirm = 0 WHERE id = ?',
         [order.id]
       );
+    }
+
+    // 直接收款订单或缺少回调地址订单：仅做支付确认，不执行下游回调
+    if (isDirectOrder || !order.notify_url) {
+      await db.query(
+        'UPDATE orders SET notify_status = 1, notify_time = NOW() WHERE id = ?',
+        [order.id]
+      );
+      return res.json({ code: 0, msg: '确认支付成功' });
     }
 
     // 获取商户密钥用于签名
@@ -261,15 +284,19 @@ router.post('/orders/notify', requireProviderRamPermission('order'), async (req,
     );
 
     if (success) {
-      res.json({ code: 0, msg: '回调成功' });
+      res.json({ code: 0, msg: '确认支付成功' });
     } else {
-      res.json({ code: -1, msg: '回调失败：商户服务器未返回 success' });
+      res.json({ code: -1, msg: '确认支付失败：商户服务器未返回 success' });
     }
   } catch (error) {
-    console.error('重发回调错误:', error);
+    console.error('确认支付错误:', error);
     res.json({ code: -1, msg: '操作失败' });
   }
-});
+}
+
+router.post('/orders/confirm-payment', requireProviderRamPermission('order'), confirmPaymentHandler);
+// 兼容旧入口
+router.post('/orders/notify', requireProviderRamPermission('order'), confirmPaymentHandler);
 
 // 退款订单（需要 order 权限）
 router.post('/orders/refund', requireProviderRamPermission('order'), async (req, res) => {

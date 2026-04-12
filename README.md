@@ -238,7 +238,9 @@ server/
 
 | 路径 | 说明 |
 |------|------|
+| `/direct/:token` | 直接收款页（渲染 `views/direct.ejs`） |
 | `/api/pay/cashier` | 收银台页面 |
+| `/api/pay/direct/create-order` | 直接收款创建订单 |
 | `/api/pay/dopay` | 执行支付 |
 | `/api/pay/qrcode` | 支付二维码 |
 | `/api/pay/success` | 支付成功页 |

@@ -18,6 +18,7 @@ const merchantProfile = require('./routes/merchant/profile');
 const merchantRam = require('./routes/merchant/ram');
 const merchantSettlement = require('./routes/merchant/settlement');
 const merchantServices = require('./routes/merchant/services');
+const merchantDirect = require('./routes/merchant/direct');
 
 // Provider（管理员）路由（拆分模块）
 const { providerAuthMiddleware } = require('./routes/auth');
@@ -34,6 +35,7 @@ const providerAnnouncements = require('./routes/provider/announcements');
 const providerCleanup = require('./routes/provider/cleanup');
 
 const payRoutes = require('./routes/pay');
+const directRoutes = require('./routes/direct');
 const certRoutes = require('./routes/cert');
 const payGroupRoutes = require('./routes/payGroup');
 const verificationRoutes = require('./routes/verification');
@@ -95,6 +97,7 @@ app.use('/api/merchant', merchantAuthMiddleware, merchantProfile);
 app.use('/api/merchant', merchantAuthMiddleware, merchantRam);
 app.use('/api/merchant', merchantAuthMiddleware, merchantSettlement);
 app.use('/api/merchant', merchantAuthMiddleware, merchantServices);
+app.use('/api/merchant', merchantAuthMiddleware, merchantDirect);
 app.use('/api/merchant', merchantAuthMiddleware, merchantAnnouncements);
 
 // Provider（管理员）路由（聚合拆分模块）
@@ -118,6 +121,7 @@ app.use('/api/verification', verificationRoutes);
 
 // 兼容PHP路由 /pay/* 转发到 /api/pay/*
 app.use('/pay', payRoutes);
+app.use('/direct', directRoutes);
 
 // 兼容易支付路由（根目录）- 重写URL后转发
 app.all('/submit.php', (req, res, next) => {

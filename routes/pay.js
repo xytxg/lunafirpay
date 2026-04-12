@@ -558,7 +558,29 @@ async function getPayTypesByGroups(payGroupId = null) {
 
 // 创建订单（或复用已存在的未支付订单）
 async function createOrder(data) {
-  const { merchantId, channelId, tradeNo, outTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl, feeRate, feePayer, orderType, cryptoPid, certInfo, payGroupIdSnapshot } = data;
+  const {
+    merchantId,
+    channelId,
+    tradeNo,
+    outTradeNo,
+    type,
+    name,
+    money,
+    clientIp,
+    device,
+    notifyUrl,
+    returnUrl,
+    feeRate,
+    feePayer,
+    orderType,
+    cryptoPid,
+    certInfo,
+    payGroupIdSnapshot,
+    directMode,
+    directLinkId,
+    directToken,
+    expireAt
+  } = data;
   
   // 检查是否已存在相同商户订单号的未支付订单（status=0）
   const [existingOrders] = await db.query(
@@ -578,8 +600,25 @@ async function createOrder(data) {
     const existingOrder = existingOrders[0];
     // 复用已存在的订单，更新支付通道和费率信息，以及身份限制信息
     await db.query(
-      'UPDATE orders SET channel_id = ?, pay_type = ?, notify_url = ?, return_url = ?, fee_money = ?, real_money = ?, fee_payer = ?, cert_info = ? WHERE id = ?',
-      [channelId, type, notifyUrl, returnUrl, feeMoney, realMoney, feePayer || 'merchant', certInfoJson, existingOrder.id]
+      `UPDATE orders
+       SET channel_id = ?, pay_type = ?, notify_url = ?, return_url = ?, fee_money = ?, real_money = ?, fee_payer = ?, cert_info = ?,
+           direct_mode = ?, direct_link_id = ?, direct_token = ?, expire_at = ?
+       WHERE id = ?`,
+      [
+        channelId,
+        type,
+        notifyUrl,
+        returnUrl,
+        feeMoney,
+        realMoney,
+        feePayer || 'merchant',
+        certInfoJson,
+        directMode || 'none',
+        directLinkId || null,
+        directToken || null,
+        expireAt || null,
+        existingOrder.id
+      ]
     );
     console.log('复用已存在订单', { tradeNo: existingOrder.trade_no, outTradeNo, feeMoney, realMoney, feePayer, certInfo });
     return { orderId: existingOrder.id, tradeNo: existingOrder.trade_no, isExisting: true };
@@ -588,11 +627,49 @@ async function createOrder(data) {
   console.log('创建订单:', { tradeNo, money: moneyFloat, feeRate, feeMoney, realMoney, feePayer, orderType, certInfo });
   
   const [result] = await db.query(
-    `INSERT INTO orders (merchant_id, channel_id, trade_no, out_trade_no, pay_type, name, money, real_money, fee_money, fee_payer, client_ip, notify_url, return_url, status, order_type, crypto_pid, pay_group_id_snapshot, cert_info, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, NOW())`,
-    [merchantId, channelId, tradeNo, outTradeNo, type, name, moneyFloat, realMoney, feeMoney, feePayer || 'merchant', clientIp, notifyUrl, returnUrl, orderType || 'normal', cryptoPid || null, payGroupIdSnapshot || null, certInfoJson]
+    `INSERT INTO orders (merchant_id, channel_id, trade_no, out_trade_no, pay_type, name, money, real_money, fee_money, fee_payer, client_ip, notify_url, return_url, status, order_type, direct_mode, direct_link_id, direct_token, expire_at, crypto_pid, pay_group_id_snapshot, cert_info, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      merchantId,
+      channelId,
+      tradeNo,
+      outTradeNo,
+      type,
+      name,
+      moneyFloat,
+      realMoney,
+      feeMoney,
+      feePayer || 'merchant',
+      clientIp,
+      notifyUrl,
+      returnUrl,
+      orderType || 'normal',
+      directMode || 'none',
+      directLinkId || null,
+      directToken || null,
+      expireAt || null,
+      cryptoPid || null,
+      payGroupIdSnapshot || null,
+      certInfoJson
+    ]
   );
   return { orderId: result.insertId, tradeNo, isExisting: false };
+}
+
+async function closeOrderIfExpired(order) {
+  if (!order || order.status !== 0 || !order.expire_at) return false;
+
+  // 使用数据库时间判断，避免 Node 时区解析差异导致“秒过期”
+  const [rows] = await db.query(
+    'SELECT NOW() >= expire_at AS expired FROM orders WHERE id = ? AND expire_at IS NOT NULL LIMIT 1',
+    [order.id]
+  );
+
+  if (rows.length === 0 || Number(rows[0].expired) !== 1) return false;
+
+  await db.query('UPDATE orders SET status = 2 WHERE id = ? AND status = 0', [order.id]);
+  order.status = 2;
+  return true;
 }
 
 // 生成订单号
@@ -606,6 +683,17 @@ function generateTradeNo() {
     String(now.getSeconds()).padStart(2, '0');
   const random = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
   return dateStr + random;
+}
+
+function formatDateTimeLocal(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${y}-${m}-${day} ${h}:${min}:${s}`;
 }
 
 // 获取支付方式显示名称
@@ -1616,6 +1704,190 @@ router.post('/test/create', async (req, res) => {
   }
 });
 
+// 直接收款创建订单（公开）
+router.post('/direct/create-order', async (req, res) => {
+  try {
+    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
+    const moneyRaw = req.body.money;
+
+    if (!token || !/^[A-Za-z0-9]{24}$|^[A-Za-z0-9]{32}$/.test(token)) {
+      return res.json({ code: 1, msg: '收款链接无效' });
+    }
+
+    let merchant = null;
+    let directMode = 'default';
+    let directLinkId = null;
+    let directToken = token;
+    let expireAt = null;
+    let orderMoney = parseFloat(moneyRaw);
+
+    if (token.length === 24) {
+      const [rows] = await db.query(
+        `SELECT u.id AS user_id, u.direct_pay_enabled, m.notify_url, m.return_url, m.status, m.fee_rate AS merchant_fee_rate,
+                m.fee_rates AS merchant_fee_rates, m.fee_payer, m.pay_group_id
+         FROM users u
+         INNER JOIN merchants m ON m.user_id = u.id
+         WHERE u.direct_pay_token = ?
+         LIMIT 1`,
+        [token]
+      );
+
+      if (rows.length === 0) {
+        return res.json({ code: 1, msg: '收款链接不存在' });
+      }
+
+      merchant = rows[0];
+      if (merchant.direct_pay_enabled !== 1) {
+        return res.json({ code: 1, msg: '该商户未启用直接收款' });
+      }
+
+      if (!Number.isFinite(orderMoney) || orderMoney <= 0) {
+        return res.json({ code: 1, msg: '请输入正确金额' });
+      }
+    } else {
+      directMode = 'fixed';
+      const [rows] = await db.query(
+        `SELECT dl.id, dl.merchant_user_id, dl.fixed_amount, dl.expire_hours, dl.expires_at, dl.is_enabled,
+                m.notify_url, m.return_url, m.status, m.fee_rate AS merchant_fee_rate,
+                m.fee_rates AS merchant_fee_rates, m.fee_payer, m.pay_group_id
+         FROM direct_links dl
+         INNER JOIN merchants m ON m.user_id = dl.merchant_user_id
+         WHERE dl.token = ?
+         LIMIT 1`,
+        [token]
+      );
+
+      if (rows.length === 0) {
+        return res.json({ code: 1, msg: '固定金额链接不存在' });
+      }
+
+      const fixedLink = rows[0];
+      if (fixedLink.is_enabled !== 1) {
+        return res.json({ code: 1, msg: '该固定金额链接已停用' });
+      }
+      const [fixedExpireRows] = await db.query(
+        'SELECT NOW() >= expires_at AS expired FROM direct_links WHERE id = ? AND expires_at IS NOT NULL LIMIT 1',
+        [fixedLink.id]
+      );
+      if (!fixedLink.expires_at || fixedExpireRows.length === 0 || Number(fixedExpireRows[0].expired) === 1) {
+        return res.json({ code: 1, msg: '该固定金额链接已过期' });
+      }
+
+      merchant = {
+        ...fixedLink,
+        user_id: fixedLink.merchant_user_id
+      };
+      directLinkId = fixedLink.id;
+      orderMoney = parseFloat(fixedLink.fixed_amount);
+      // 直接沿用数据库读取值，避免 Node 本地时区格式化导致偏移
+      expireAt = fixedLink.expires_at;
+    }
+
+    if (!merchant || !['active', 'approved'].includes(merchant.status)) {
+      return res.json({ code: 1, msg: '商户状态不可用' });
+    }
+
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+
+    if (directMode === 'fixed' && directLinkId) {
+      const [paidRows] = await db.query(
+        `SELECT trade_no
+         FROM orders
+         WHERE merchant_id = ? AND direct_mode = 'fixed' AND direct_link_id = ? AND status = 1
+         ORDER BY paid_at DESC, id DESC
+         LIMIT 1`,
+        [merchant.user_id, directLinkId]
+      );
+
+      if (paidRows.length > 0) {
+        const paidTradeNo = paidRows[0].trade_no;
+        const successUrl = `${protocol}://${host}/api/pay/success?trade_no=${encodeURIComponent(paidTradeNo)}`;
+        return res.json({
+          code: 0,
+          msg: 'success',
+          data: {
+            trade_no: paidTradeNo,
+            success_url: successUrl
+          }
+        });
+      }
+
+      const [existingRows] = await db.query(
+        `SELECT trade_no, expire_at
+         FROM orders
+         WHERE merchant_id = ? AND direct_mode = 'fixed' AND direct_link_id = ? AND status = 0
+         ORDER BY id DESC
+         LIMIT 1`,
+        [merchant.user_id, directLinkId]
+      );
+
+      if (existingRows.length > 0) {
+        const existingOrder = existingRows[0];
+        const [existingExpireRows] = await db.query(
+          'SELECT NOW() >= expire_at AS expired FROM orders WHERE trade_no = ? AND status = 0 AND expire_at IS NOT NULL LIMIT 1',
+          [existingOrder.trade_no]
+        );
+        const isExpired = !existingOrder.expire_at || existingExpireRows.length === 0 || Number(existingExpireRows[0].expired) === 1;
+
+        if (isExpired) {
+          await db.query('UPDATE orders SET status = 2 WHERE trade_no = ? AND status = 0', [existingOrder.trade_no]);
+        } else {
+          const cashierUrl = `${protocol}://${host}/api/pay/cashier?trade_no=${existingOrder.trade_no}`;
+          return res.json({
+            code: 0,
+            msg: 'success',
+            data: {
+              trade_no: existingOrder.trade_no,
+              cashier_url: cashierUrl
+            }
+          });
+        }
+      }
+    }
+
+    const tradeNo = generateTradeNo();
+    const outTradeNo = `direct_${tradeNo}`;
+
+    const feeRate = await getMerchantFeeRate(merchant, null);
+    const orderResult = await createOrder({
+      merchantId: merchant.user_id,
+      channelId: null,
+      tradeNo,
+      outTradeNo,
+      type: null,
+      name: directMode === 'fixed' ? '固定金额直接收款' : '直接收款',
+      money: parseFloat(orderMoney.toFixed(2)),
+      clientIp: getClientIP(req),
+      device: 'pc',
+      notifyUrl: merchant.notify_url || '',
+      returnUrl: merchant.return_url || '',
+      feeRate,
+      feePayer: merchant.fee_payer || 'merchant',
+      orderType: 'normal',
+      payGroupIdSnapshot: merchant.pay_group_id || null,
+      directMode,
+      directLinkId,
+      directToken,
+      expireAt
+    });
+
+    const cashierUrl = `${protocol}://${host}/api/pay/cashier?trade_no=${orderResult.tradeNo}`;
+
+    return res.json({
+      code: 0,
+      msg: 'success',
+      data: {
+        trade_no: orderResult.tradeNo,
+        cashier_url: cashierUrl
+      }
+    });
+  } catch (error) {
+    console.error('Direct Create Order Error:', error);
+    return res.json({ code: -1, msg: '创建订单失败' });
+  }
+});
+
 // 取消测试支付订单（公开，仅当前访客可取消自己的未支付测试订单）
 router.post('/test/cancel', async (req, res) => {
   try {
@@ -1636,6 +1908,10 @@ router.post('/test/cancel', async (req, res) => {
     }
 
     const order = orders[0];
+
+    if (await closeOrderIfExpired(order)) {
+      return res.render('error', { message: '订单已过期', code: 'ORDER_EXPIRED', backUrl: null });
+    }
     if (order.order_type !== 'test') {
       return res.json({ code: 1, msg: '仅测试订单支持取消' });
     }
@@ -1685,8 +1961,9 @@ router.get('/cashier', async (req, res) => {
 
     // 查询订单
     const [orders] = await db.query(
-      `SELECT o.*
+      `SELECT o.*, u.merchant_name
        FROM orders o
+       LEFT JOIN users u ON u.id = o.merchant_id
        WHERE o.trade_no = ?`,
       [trade_no]
     );
@@ -1696,6 +1973,10 @@ router.get('/cashier', async (req, res) => {
     }
 
     const order = orders[0];
+
+    if (await closeOrderIfExpired(order)) {
+      return res.json({ code: 1, msg: '订单已过期' });
+    }
 
     // 状态: 0=待支付 1=已支付 2=已关闭
     if (order.status !== 0) {
@@ -1815,13 +2096,14 @@ router.get('/cashier', async (req, res) => {
 
     // 传入 pay_type 时，启用直连模式，但仍复用 cashier.ejs 的统一UI模板
     if (requestedPayType && autoPayType) {
+      const displayMerchantName = (order.merchant_name || '').trim() || '在线支付';
       return res.render('cashier', {
         order: { ...order, display_name: displayOrderName },
         payTypes,
         selectedGroupId,
         autoPayType: autoPayType,
         directMode: true,
-        sitename: order.sitename || '在线支付',
+        sitename: displayMerchantName,
         isCrypto: false,
         lockedPayment,
         testVisitorId,
@@ -1829,6 +2111,7 @@ router.get('/cashier', async (req, res) => {
       });
     }
 
+    const displayMerchantName = (order.merchant_name || '').trim() || '在线支付';
     // 渲染收银台页面（使用 EJS 模板）
     res.render('cashier', {
       order: { ...order, display_name: displayOrderName },  // 添加显示名称
@@ -1836,7 +2119,7 @@ router.get('/cashier', async (req, res) => {
       selectedGroupId,
       autoPayType: '',
       directMode: false,
-      sitename: order.sitename || '在线支付',
+      sitename: displayMerchantName,
       isCrypto: false,
       lockedPayment,  // 传递锁定的支付信息
       testVisitorId,
@@ -2528,6 +2811,19 @@ router.post('/dopay', async (req, res) => {
     }
 
     if (result.type === 'jump') {
+      const jumpUrl = String(result.url || '');
+      const lowerJumpUrl = jumpUrl.toLowerCase();
+      const isQrcodeImageUrl = /^https?:\/\//.test(lowerJumpUrl)
+        && (
+          lowerJumpUrl.includes('qr.alipay.com')
+          || lowerJumpUrl.includes('/qrcode')
+          || /\.(png|jpg|jpeg|gif|webp)(\?|$)/.test(lowerJumpUrl)
+        );
+
+      if (isQrcodeImageUrl) {
+        return res.json({ code: 0, msg: 'success', qrcode: jumpUrl, expire_time: order.expire_at || null });
+      }
+
       // 检查是否是跳转到 qrcode 页面，如果是则直接获取二维码返回
       const qrcodeMatch = result.url.match(/^\/pay\/qrcode(?:pc)?\/([^\/\?]+)/);
       if (qrcodeMatch && typeof plugin.qrcode === 'function') {
@@ -2541,7 +2837,7 @@ router.post('/dopay', async (req, res) => {
           const qrcodeResult = await plugin.qrcode(pluginConfig, orderInfo, conf);
           
           if (qrcodeResult.type === 'qrcode') {
-            return res.json({ code: 0, msg: 'success', qrcode: qrcodeResult.url });
+            return res.json({ code: 0, msg: 'success', qrcode: qrcodeResult.url, expire_time: order.expire_at || null });
           } else if (qrcodeResult.type === 'jump') {
             // 如果 qrcode 方法也返回跳转（如支付宝内打开），则返回跳转
             return res.json({ code: 0, msg: 'success', pay_url: qrcodeResult.url });
@@ -2557,7 +2853,7 @@ router.post('/dopay', async (req, res) => {
     }
 
     if (result.type === 'qrcode') {
-      return res.json({ code: 0, msg: 'success', qrcode: result.qr_code || result.url });
+      return res.json({ code: 0, msg: 'success', qrcode: result.qr_code || result.url, expire_time: order.expire_at || null });
     }
 
     if (result.type === 'html') {
