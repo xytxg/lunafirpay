@@ -31,6 +31,7 @@ const providerSettlement = require('./routes/provider/settlement');
 const providerDomains = require('./routes/provider/domains');
 const providerSystem = require('./routes/provider/system');
 const providerAnnouncements = require('./routes/provider/announcements');
+const providerCleanup = require('./routes/provider/cleanup');
 
 const payRoutes = require('./routes/pay');
 const certRoutes = require('./routes/cert');
@@ -44,6 +45,7 @@ const telegramService = require('./Telegram');
 // 邮件发送服务
 const emailService = require('./utils/emailService');
 const autoSettlementService = require('./utils/autoSettlementService');
+const recordCleanupService = require('./utils/recordCleanupService');
 
 const app = express();
 const distPath = path.join(__dirname, 'dist');
@@ -106,6 +108,7 @@ app.use('/api/admin', providerAuthMiddleware, providerSettlement);
 app.use('/api/admin', providerAuthMiddleware, providerDomains);
 app.use('/api/admin', providerAuthMiddleware, providerSystem);
 app.use('/api/admin', providerAuthMiddleware, providerAnnouncements);
+app.use('/api/admin', providerAuthMiddleware, providerCleanup);
 
 app.use('/api/pay', payRoutes);
 app.use('/api/cert', certRoutes);
@@ -186,6 +189,7 @@ emailService.start().then(() => {
 
 // 启动自动结算调度服务
 autoSettlementService.start();
+recordCleanupService.start();
 
 // 启动服务器
 const PORT = 3000;
@@ -213,5 +217,6 @@ process.on('SIGINT', () => {
   telegramService.stop();
   emailService.stop();
   autoSettlementService.stop();
+  recordCleanupService.stop();
   process.exit(0);
 });

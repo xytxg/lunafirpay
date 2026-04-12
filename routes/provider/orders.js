@@ -22,9 +22,9 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
                END AS merchant_display,
                o.pay_type, o.name,
                o.money, o.fee_money as fee, o.notify_url, o.return_url,
-               o.status, o.created_at, o.paid_at, 
+               o.status, o.order_type, o.created_at, o.paid_at, 
                o.notify_status, o.notify_count, o.notify_time, o.merchant_confirm,
-               o.refund_status, o.refund_money, o.refund_no, o.refund_at,
+               o.refund_status, o.refund_money, o.refund_no, o.refund_at, o.refund_reason,
                u.username as merchant_name,
                pc.channel_name as channel_name, pc.plugin_name as channel_plugin
                FROM orders o 
@@ -76,7 +76,7 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
 
     // 获取统计数据（成功订单的金额和手续费）
     const statsSql = `SELECT COALESCE(SUM(o.money), 0) as totalMoney, COALESCE(SUM(o.fee_money), 0) as totalFee 
-              FROM orders o LEFT JOIN merchants m ON o.merchant_id = m.user_id WHERE o.status = 1` + whereConditions;
+          FROM orders o LEFT JOIN merchants m ON o.merchant_id = m.user_id WHERE o.status = 1` + whereConditions;
     const [statsResult] = await db.query(statsSql, params);
     const totalMoney = statsResult[0].totalMoney || 0;
     const totalFee = statsResult[0].totalFee || 0;

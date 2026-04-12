@@ -3064,6 +3064,18 @@ async function tryAutoRefundTestOrder(order) {
   }
 }
 
+function scheduleAutoRefundTestOrder(order, delayMs = 30000) {
+  if (!order || order.order_type !== 'test') {
+    return;
+  }
+
+  setTimeout(() => {
+    tryAutoRefundTestOrder(order).catch((error) => {
+      console.error('测试订单延迟自动退款异常:', error);
+    });
+  }, delayMs);
+}
+
 // 发送下游通知给商户，并增加商户余额
 async function sendDownstreamNotify(order) {
   try {
@@ -3176,8 +3188,8 @@ async function sendDownstreamNotify(order) {
       }
     }
 
-    // 测试订单可配置秒退，放在支付成功后续逻辑最后执行
-    await tryAutoRefundTestOrder(order);
+    // 测试订单可配置自动退款，延迟30秒执行，降低上游刚支付即退款的失败概率
+    scheduleAutoRefundTestOrder(order, 30000);
   } catch (error) {
     console.error('处理支付后续逻辑失败:', error);
   }

@@ -323,6 +323,43 @@ CREATE TABLE IF NOT EXISTS `settle_records` (
   KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 记录清理任务配置表
+CREATE TABLE IF NOT EXISTS `cleanup_task_config` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `run_time` varchar(5) NOT NULL DEFAULT '02:00',
+  `merchant_scope` enum('all','ids') NOT NULL DEFAULT 'all',
+  `merchant_ids` json DEFAULT NULL,
+  `cleanup_orders` tinyint(1) NOT NULL DEFAULT '1',
+  `order_statuses` json DEFAULT NULL,
+  `cleanup_settlements` tinyint(1) NOT NULL DEFAULT '0',
+  `last_run_date` date DEFAULT NULL,
+  `last_run_at` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='记录清理配置';
+
+-- 记录清理执行日志表
+CREATE TABLE IF NOT EXISTS `cleanup_execution_logs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `trigger_type` enum('manual','schedule') NOT NULL DEFAULT 'manual',
+  `operator_id` varchar(20) DEFAULT NULL,
+  `merchant_scope` enum('all','ids') NOT NULL DEFAULT 'all',
+  `merchant_count` int NOT NULL DEFAULT '0',
+  `cleanup_orders` tinyint(1) NOT NULL DEFAULT '0',
+  `order_statuses` json DEFAULT NULL,
+  `cleanup_settlements` tinyint(1) NOT NULL DEFAULT '0',
+  `orders_affected` int NOT NULL DEFAULT '0',
+  `settlements_affected` int NOT NULL DEFAULT '0',
+  `success` tinyint(1) NOT NULL DEFAULT '1',
+  `error_message` varchar(500) DEFAULT NULL,
+  `executed_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_executed_at` (`executed_at`),
+  KEY `idx_success` (`success`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='记录清理执行日志';
+
 -- ==================== Telegram 相关表 ====================
 
 -- Telegram绑定表
@@ -536,6 +573,21 @@ DEALLOCATE PREPARE stmt;
 INSERT IGNORE INTO `settlement_options` (`id`, `alipay_enabled`, `wxpay_enabled`, `bank_enabled`, `crypto_enabled`)
 VALUES (1, 1, 1, 1, 0);
 
+INSERT IGNORE INTO `cleanup_task_config`
+(`id`, `enabled`, `run_time`, `merchant_scope`, `merchant_ids`, `cleanup_orders`, `order_statuses`, `cleanup_settlements`)
+VALUES (1, 0, '02:00', 'all', JSON_ARRAY(), 0, JSON_OBJECT('statuses', JSON_ARRAY(), 'cleanup_retention_days', 30, 'cleanup_test_orders', false, 'cleanup_unnotified_paid', false), 0);
+
+-- 兜底修正历史定时清理配置：固定全商户，禁用“已支付未回调”定时项
+UPDATE `cleanup_task_config`
+SET `merchant_scope` = 'all',
+    `merchant_ids` = JSON_ARRAY(),
+    `order_statuses` = JSON_SET(
+      COALESCE(`order_statuses`, JSON_OBJECT()),
+      '$.cleanup_unnotified_paid',
+      false
+    )
+WHERE `id` = 1;
+
 -- ==================== 数据库升级（添加缺失的列） ====================
 
 -- 为 provider_channels 表添加 time_start 和 time_stop 列（如果不存在）
@@ -601,3 +653,4 @@ SET @preparedStatement = (SELECT IF(
 PREPARE stmt FROM @preparedStatement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
