@@ -401,6 +401,8 @@ class RecordCleanupService {
     let orderCount = 0;
     let settlementCount = 0;
     let directLinkCount = 0;
+    let completedOrderDirectLinkCount = 0;
+    const completedOrderCleanupEnabled = includeStatusOrders && orderStatuses.includes(1);
     const breakdown = {
       paid_success: 0,
       unpaid: 0,
@@ -408,6 +410,7 @@ class RecordCleanupService {
       unnotified_paid: 0,
       test_orders: 0,
       expired_direct_links: 0,
+      completed_order_direct_links: 0,
       settlements: 0,
       settlements_completed: 0,
       settlements_unfinished: 0
@@ -423,31 +426,80 @@ class RecordCleanupService {
       settlementCount = Number(rows[0]?.total || 0);
     }
 
-    const directLinkConditions = ['expires_at IS NOT NULL'];
-    const directLinkParams = [];
-    if (merchantIds.length > 0) {
-      directLinkConditions.push(`merchant_user_id IN (${merchantIds.map(() => '?').join(',')})`);
-      directLinkParams.push(...merchantIds);
+    if (completedOrderCleanupEnabled && filter.orderWhere) {
+      const [rows] = await db.query(
+        `SELECT COUNT(*) AS total
+         FROM direct_links dl
+         WHERE EXISTS (
+           SELECT 1
+           FROM orders o
+           WHERE o.direct_mode = 'fixed'
+             AND o.direct_link_id = dl.id
+             AND o.status = 1
+             AND (${filter.orderWhere})
+         )
+         AND NOT EXISTS (
+           SELECT 1
+           FROM orders o2
+           WHERE o2.direct_mode = 'fixed'
+             AND o2.direct_link_id = dl.id
+             AND NOT (${filter.orderWhere})
+         )`,
+        [...filter.orderParams, ...filter.orderParams]
+      );
+      completedOrderDirectLinkCount = Number(rows[0]?.total || 0);
+      breakdown.completed_order_direct_links = completedOrderDirectLinkCount;
     }
-    if (startDate && endDate) {
-      directLinkConditions.push('expires_at >= ? AND expires_at < DATE_ADD(?, INTERVAL 1 DAY)');
-      directLinkParams.push(startDate, endDate);
-    } else if (cleanupRetentionDays === 0) {
-      directLinkConditions.push('expires_at < NOW()');
-    } else {
-      directLinkConditions.push('expires_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)');
-      directLinkParams.push(cleanupRetentionDays);
-    }
-    const directLinkWhere = directLinkConditions.join(' AND ');
 
     if (cleanupExpiredDirectLinks) {
+      const directLinkConditions = ['dl.expires_at IS NOT NULL'];
+      const directLinkParams = [];
+
+      if (merchantIds.length > 0) {
+        directLinkConditions.push(`dl.merchant_user_id IN (${merchantIds.map(() => '?').join(',')})`);
+        directLinkParams.push(...merchantIds);
+      }
+
+      if (startDate && endDate) {
+        directLinkConditions.push('dl.expires_at >= ? AND dl.expires_at < DATE_ADD(?, INTERVAL 1 DAY)');
+        directLinkParams.push(startDate, endDate);
+      } else if (cleanupRetentionDays === 0) {
+        directLinkConditions.push('dl.expires_at < NOW()');
+      } else {
+        directLinkConditions.push('dl.expires_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)');
+        directLinkParams.push(cleanupRetentionDays);
+      }
+
+      if (filter.orderWhere && (includeStatusOrders || cleanupTestOrders || cleanupUnnotifiedPaid)) {
+        directLinkConditions.push(
+          `NOT EXISTS (
+             SELECT 1
+             FROM orders o
+             WHERE o.direct_mode = 'fixed'
+               AND o.direct_link_id = dl.id
+               AND NOT (${filter.orderWhere})
+           )`
+        );
+        directLinkParams.push(...filter.orderParams);
+      } else {
+        directLinkConditions.push(
+          `NOT EXISTS (
+             SELECT 1
+             FROM orders o
+             WHERE o.direct_mode = 'fixed'
+               AND o.direct_link_id = dl.id
+           )`
+        );
+      }
+
       const [rows] = await db.query(
-        `SELECT COUNT(*) AS total FROM direct_links WHERE ${directLinkWhere}`,
+        `SELECT COUNT(*) AS total FROM direct_links dl WHERE ${directLinkConditions.join(' AND ')}`,
         directLinkParams
       );
-      directLinkCount = Number(rows[0]?.total || 0);
-      breakdown.expired_direct_links = directLinkCount;
+      breakdown.expired_direct_links = Number(rows[0]?.total || 0);
     }
+
+    directLinkCount = breakdown.expired_direct_links + completedOrderDirectLinkCount;
 
     // 预估明细拆分，方便定位具体命中项
     const orderBaseConditions = [];
@@ -697,6 +749,21 @@ class RecordCleanupService {
       let ordersAffected = 0;
       let settlementsAffected = 0;
       let directLinksAffected = 0;
+      const completedOrderCleanupEnabled = includeStatusOrders && orderStatuses.includes(1);
+      let completedOrderLinkIds = [];
+
+      if (completedOrderCleanupEnabled && filter.orderWhere) {
+        const [rows] = await conn.query(
+          `SELECT DISTINCT direct_link_id AS id
+           FROM orders
+           WHERE direct_mode = 'fixed'
+             AND direct_link_id IS NOT NULL
+             AND status = 1
+             AND (${filter.orderWhere})`,
+          filter.orderParams
+        );
+        completedOrderLinkIds = rows.map((item) => Number(item.id)).filter((v) => Number.isFinite(v) && v > 0);
+      }
 
       if (includeStatusOrders || cleanupTestOrders || cleanupUnnotifiedPaid) {
         const [result] = await conn.query(
@@ -714,30 +781,56 @@ class RecordCleanupService {
         settlementsAffected = Number(result.affectedRows || 0);
       }
 
+      if (completedOrderLinkIds.length > 0) {
+        const placeholders = completedOrderLinkIds.map(() => '?').join(',');
+        const [result] = await conn.query(
+          `DELETE dl
+           FROM direct_links dl
+           WHERE dl.id IN (${placeholders})
+             AND NOT EXISTS (
+               SELECT 1
+               FROM orders o
+               WHERE o.direct_mode = 'fixed'
+                 AND o.direct_link_id = dl.id
+             )`,
+          completedOrderLinkIds
+        );
+        directLinksAffected += Number(result.affectedRows || 0);
+      }
+
       if (cleanupExpiredDirectLinks) {
-        const directLinkConditions = ['expires_at IS NOT NULL'];
+        const directLinkConditions = ['dl.expires_at IS NOT NULL'];
         const directLinkParams = [];
 
         if (merchantIds.length > 0) {
-          directLinkConditions.push(`merchant_user_id IN (${merchantIds.map(() => '?').join(',')})`);
+          directLinkConditions.push(`dl.merchant_user_id IN (${merchantIds.map(() => '?').join(',')})`);
           directLinkParams.push(...merchantIds);
         }
 
         if (startDate && endDate) {
-          directLinkConditions.push('expires_at >= ? AND expires_at < DATE_ADD(?, INTERVAL 1 DAY)');
+          directLinkConditions.push('dl.expires_at >= ? AND dl.expires_at < DATE_ADD(?, INTERVAL 1 DAY)');
           directLinkParams.push(startDate, endDate);
         } else if (cleanupRetentionDays === 0) {
-          directLinkConditions.push('expires_at < NOW()');
+          directLinkConditions.push('dl.expires_at < NOW()');
         } else {
-          directLinkConditions.push('expires_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)');
+          directLinkConditions.push('dl.expires_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)');
           directLinkParams.push(cleanupRetentionDays);
         }
 
+        directLinkConditions.push(
+          `NOT EXISTS (
+             SELECT 1
+             FROM orders o
+             WHERE o.direct_mode = 'fixed'
+               AND o.direct_link_id = dl.id
+           )`
+        );
+
         const [result] = await conn.query(
-          `DELETE FROM direct_links WHERE ${directLinkConditions.join(' AND ')}`,
+          `DELETE dl FROM direct_links dl WHERE ${directLinkConditions.join(' AND ')}`,
           directLinkParams
         );
-        directLinksAffected = Number(result.affectedRows || 0);
+        directLinksAffected += Number(result.affectedRows || 0);
       }
 
       await conn.commit();
