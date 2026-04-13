@@ -843,517 +843,11 @@ function verifyTestOrderVisitorAccess(order, visitorId, visitorSig) {
   return { ok: true, visitorId: savedVisitorId, visitorSig: expectedSig };
 }
 
-// ==================== V1 接口（MD5签名）===================
-
-// V1 页面跳转支付 - submit.php
-router.all('/submit', async (req, res) => {
-  try {
-    const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param, cert_no, cert_name, min_age } = params;
-
-    // 参数验证
-    if (!pid || !type || !out_trade_no || !notify_url || !name || !money || !sign) {
-      return res.status(400).send('缺少必要参数');
-    }
-
-    // 验证买家身份限制参数
-    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
-    if (certInfo && certInfo.error) {
-      return res.status(400).send(certInfo.error);
-    }
-
-    // 获取商户信息
-    const merchant = await getMerchantByPid(pid);
-    if (!merchant) {
-      return res.status(400).send('商户不存在或已禁止');
-    }
-
-    // 验证回调域名白名单
-    const domainCheck = await validateCallbackDomain(merchant.user_id, notify_url);
-    if (!domainCheck.valid) {
-      return res.status(400).send(domainCheck.message);
-    }
-
-    // 验证签名
-    const signParams = { pid, type, out_trade_no, notify_url, name, money };
-    if (return_url) signParams.return_url = return_url;
-    if (sitename) signParams.sitename = sitename;
-    if (param) signParams.param = param;
-
-    if (!verifySignMD5(signParams, sign, merchant.api_key)) {
-      return res.status(400).send('签名验证失败');
-    }
-
-    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
-
-    // 获取支付通道（按商户当前支付组）
-    const channel = await getChannel(type, merchantPayGroupId);
-    if (!channel) {
-      return res.status(400).send('支付通道不存在或已关闭');
-    }
-
-    // 检查金额限制（只有限额大于0时才检查）
-    const moneyFloat = parseFloat(money);
-    const minAmount = parseFloat(channel.min_amount) || 0;
-    const maxAmount = parseFloat(channel.max_amount) || 0;
-    if (minAmount > 0 && moneyFloat < minAmount) {
-      return res.status(400).send(`支付金额不能小于 ${minAmount} 元`);
-    }
-    if (maxAmount > 0 && moneyFloat > maxAmount) {
-      return res.status(400).send(`支付金额不能大于 ${maxAmount} 元`);
-    }
-
-    // 获取费率：商户个人费率优先，否则用支付组费率
-    const feeRate = await getMerchantFeeRate(merchant, type);
-    const feePayer = merchant.fee_payer || 'merchant';
-
-    // 创建订单（或复用已存在的未支付订单）
-    const clientIp = getClientIP(req);
-    const orderResult = await createOrder({
-      merchantId: merchant.user_id,  // orders.merchant_id 存储 users.id
-      channelId: channel.id,
-      tradeNo: generateTradeNo(),
-      outTradeNo: out_trade_no,
-      type,
-      name,
-      money: moneyFloat,
-      clientIp,
-      device: 'pc',
-      notifyUrl: notify_url,
-      returnUrl: return_url || '',
-      feeRate,
-      feePayer,
-      payGroupIdSnapshot: merchantPayGroupId,
-      certInfo  // 买家身份限制信息
-    });
-    const tradeNo = orderResult.tradeNo;
-
-    // 重定向到收银台（使用相对路径），透传 pay_type 以启用直连页面
-    res.redirect(`/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`);
-
-  } catch (error) {
-    console.error('V1 Submit Error:', error);
-    res.status(500).send('系统错误');
-  }
-});
-
-// V1 API接口支付 - mapi.php
-router.all('/mapi', async (req, res) => {
-  try {
-    const params = { ...req.query, ...req.body };
-    const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, sitename, param, cert_no, cert_name, min_age, direct_pay } = params;
-
-    // 参数验证
-    if (!pid || !type || !out_trade_no || !notify_url || !name || !money || !sign) {
-      return res.json({ code: -1, msg: '缺少必要参数' });
-    }
-
-    // 验证买家身份限制参数
-    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
-    if (certInfo && certInfo.error) {
-      return res.json({ code: -1, msg: certInfo.error });
-    }
-
-    // 获取商户信息
-    const merchant = await getMerchantByPid(pid);
-    if (!merchant) {
-      return res.json({ code: -1, msg: '商户不存在或已禁止' });
-    }
-
-    // 验证回调域名白名单
-    const domainCheck = await validateCallbackDomain(merchant.user_id, notify_url);
-    if (!domainCheck.valid) {
-      return res.json({ code: -1, msg: domainCheck.message });
-    }
-
-    // 验证签名
-    const signParams = { pid, type, out_trade_no, notify_url, name, money };
-    if (return_url) signParams.return_url = return_url;
-    if (sitename) signParams.sitename = sitename;
-    if (param) signParams.param = param;
-
-    if (!verifySignMD5(signParams, sign, merchant.api_key)) {
-      return res.json({ code: -1, msg: '签名验证失败' });
-    }
-
-    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
-
-    // 获取支付通道（按商户当前支付组）
-    const channel = await getChannel(type, merchantPayGroupId);
-    if (!channel) {
-      return res.json({ code: -1, msg: '支付通道不存在或已关闭' });
-    }
-
-    // 检查金额限制（只有限额大于0时才检查）
-    const moneyFloat = parseFloat(money);
-    const minAmount = parseFloat(channel.min_amount) || 0;
-    const maxAmount = parseFloat(channel.max_amount) || 0;
-    if (minAmount > 0 && moneyFloat < minAmount) {
-      return res.json({ code: -1, msg: `支付金额不能小于 ${minAmount} 元` });
-    }
-    if (maxAmount > 0 && moneyFloat > maxAmount) {
-      return res.json({ code: -1, msg: `支付金额不能大于 ${maxAmount} 元` });
-    }
-
-    // 获取费率：商户个人费率优先，否则用支付组费率
-    const feeRate = await getMerchantFeeRate(merchant, type);
-    const feePayer = merchant.fee_payer || 'merchant';
-
-    // 创建订单（或复用已存在的未支付订单）
-    const clientIp = getClientIP(req);
-    const orderResult = await createOrder({
-      merchantId: merchant.user_id,  // orders.merchant_id 存储 users.id
-      channelId: channel.id,
-      tradeNo: generateTradeNo(),
-      outTradeNo: out_trade_no,
-      type,
-      name,
-      money: moneyFloat,
-      clientIp,
-      device: 'pc',
-      notifyUrl: notify_url,
-      returnUrl: return_url || '',
-      feeRate,
-      feePayer,
-      payGroupIdSnapshot: merchantPayGroupId,
-      certInfo  // 买家身份限制信息
-    });
-    const tradeNo = orderResult.tradeNo;
-
-    // 返回支付信息（使用请求的域名而不是配置的API端点）
-    const protocol = req.get('x-forwarded-proto') || req.protocol;
-    const host = req.get('host');
-    const baseUrl = `${protocol}://${host}`;
-    const cashierUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`;
-
-    const directPayEnabled = direct_pay === true || direct_pay === 1 || direct_pay === '1';
-    let payResult = null;
-    if (directPayEnabled) {
-      try {
-        const dopayResponse = await fetch(`${baseUrl}/api/pay/dopay`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            trade_no: tradeNo,
-            pay_type: type,
-            group_id: merchantPayGroupId
-          })
-        });
-
-        if (dopayResponse.ok) {
-          payResult = await dopayResponse.json();
-        } else {
-          const rawText = await dopayResponse.text();
-          payResult = { code: 1, msg: rawText || `支付发起失败（HTTP ${dopayResponse.status}）` };
-        }
-      } catch (dopayError) {
-        console.error('V1 MAPI Direct DoPay Error:', dopayError);
-        payResult = { code: 1, msg: '支付发起失败，请稍后重试' };
-      }
-    }
-
-    const responseData = {
-      code: 1,
-      msg: 'success',
-      trade_no: tradeNo,
-      payurl: cashierUrl,
-      qrcode: '',
-      urlscheme: ''
-    };
-
-    if (payResult) {
-      responseData.pay_result = payResult;
-      if (payResult.code === 0) {
-        if (payResult.qrcode) responseData.qrcode = payResult.qrcode;
-        if (payResult.scheme) responseData.urlscheme = payResult.scheme;
-        if (payResult.pay_url) responseData.payurl = payResult.pay_url;
-      }
-    }
-
-    res.json(responseData);
-
-  } catch (error) {
-    console.error('V1 MAPI Error:', error);
-    res.json({ code: -1, msg: '系统错误' });
-  }
-});
-
-// V1 订单查询 - api.php?act=order
-router.all('/query', async (req, res) => {
-  try {
-    const params = { ...req.query, ...req.body };
-    const { pid, trade_no, out_trade_no, sign } = params;
-
-    if (!pid || !sign) {
-      return res.json({ code: -1, msg: '缺少必要参数' });
-    }
-
-    if (!trade_no && !out_trade_no) {
-      return res.json({ code: -1, msg: '订单号不能为空' });
-    }
-
-    // 获取商户信息
-    const merchant = await getMerchant(pid);
-    if (!merchant) {
-      return res.json({ code: -1, msg: '商户不存在或已禁止' });
-    }
-
-    // 验证签名
-    const signParams = { pid };
-    if (trade_no) signParams.trade_no = trade_no;
-    if (out_trade_no) signParams.out_trade_no = out_trade_no;
-
-    if (!verifySignMD5(signParams, sign, merchant.api_key)) {
-      return res.json({ code: -1, msg: '签名验证失败' });
-    }
-
-    // 查询订单
-    let query = 'SELECT * FROM orders WHERE merchant_id = ?';
-    const queryParams = [merchant.user_id];  // orders.merchant_id 存储的是 users.id
-    
-    if (trade_no) {
-      query += ' AND trade_no = ?';
-      queryParams.push(trade_no);
-    } else {
-      query += ' AND out_trade_no = ?';
-      queryParams.push(out_trade_no);
-    }
-
-    const [orders] = await db.query(query, queryParams);
-    
-    if (orders.length === 0) {
-      return res.json({ code: -1, msg: '订单不存在' });
-    }
-
-    const order = orders[0];
-    const statusMap = { 'pending': 0, 'paid': 1, 'closed': 2, 'refunded': 3 };
-
-    res.json({
-      code: 1,
-      msg: 'success',
-      trade_no: order.trade_no,
-      out_trade_no: order.out_trade_no,
-      type: order.pay_type,
-      name: order.name,
-      money: order.money,
-      status: statusMap[order.status] || 0,
-      addtime: order.created_at ? Math.floor(new Date(order.created_at).getTime() / 1000) : 0,
-      endtime: order.paid_at ? Math.floor(new Date(order.paid_at).getTime() / 1000) : 0
-    });
-
-  } catch (error) {
-    console.error('V1 Query Error:', error);
-    res.json({ code: -1, msg: '系统错误' });
-  }
-});
-
-// ==================== V2 接口（RSA签名）===================
-
-// V2 统一下单接口 - /api/pay/create
-router.all('/create', async (req, res) => {
-  try {
-    const params = { ...req.query, ...req.body };
-    const { 
-      pid, type, out_trade_no, notify_url, return_url, name, money, 
-      sign, timestamp, method, device, clientip,
-      auth_code, sub_openid, sub_appid, channel_id, param,
-      cert_no, cert_name, min_age
-    } = params;
-
-    // 参数验证
-    if (!pid || !type || !out_trade_no || !notify_url || !name || !money || !sign || !timestamp) {
-      return res.json({ code: 1001, msg: '缺少必要参数' });
-    }
-
-    // 验证时间戳
-    if (!validateTimestamp(timestamp)) {
-      return res.json({ code: 1002, msg: '时间戳已过期' });
-    }
-
-    // 验证买家身份限制参数
-    const certInfo = buildCertInfo({ cert_no, cert_name, min_age });
-    if (certInfo && certInfo.error) {
-      return res.json({ code: 1008, msg: certInfo.error });
-    }
-
-    // 获取商户信息
-    const merchant = await getMerchantByPid(pid);
-    if (!merchant) {
-      return res.json({ code: 1003, msg: '商户不存在或已禁止' });
-    }
-
-    // 验证回调域名白名单
-    const domainCheck = await validateCallbackDomain(merchant.user_id, notify_url);
-    if (!domainCheck.valid) {
-      return res.json({ code: 1005, msg: domainCheck.message });
-    }
-
-    // 验证签名（使用商户RSA公钥验证）
-    const signParams = { pid, type, out_trade_no, notify_url, name, money, timestamp };
-    if (return_url) signParams.return_url = return_url;
-    if (method) signParams.method = method;
-    if (device) signParams.device = device;
-    if (clientip) signParams.clientip = clientip;
-    if (auth_code) signParams.auth_code = auth_code;
-    if (sub_openid) signParams.sub_openid = sub_openid;
-    if (sub_appid) signParams.sub_appid = sub_appid;
-    if (channel_id) signParams.channel_id = channel_id;
-    if (param) signParams.param = param;
-
-    // 如果商户配置了RSA公钥则使用RSA验签，否则降级使用MD5
-    let signValid = false;
-    if (merchant.rsa_public_key) {
-      signValid = verifySignRSA(signParams, sign, merchant.rsa_public_key);
-    } else {
-      signValid = verifySignMD5(signParams, sign, merchant.api_key);
-    }
-
-    if (!signValid) {
-      return res.json({ code: 1004, msg: '签名验证失败' });
-    }
-
-    const merchantPayGroupId = await resolveMerchantPayGroupId(merchant);
-
-    // 获取支付通道
-    let channel;
-    if (channel_id) {
-      // 使用配置文件获取支付类型信息
-      const payTypeInfo = getPayTypeByName(type);
-      const [channels] = await db.query(
-        `SELECT pc.*
-         FROM provider_channels pc
-         WHERE pc.id = ? AND pc.status = 'active'`,
-        [channel_id]
-      );
-      if (channels[0] && payTypeInfo) {
-        channels[0].type_code = payTypeInfo.name;
-        channels[0].type_name = payTypeInfo.showname;
-      }
-      channel = channels[0];
-    } else {
-      channel = await getChannel(type, merchantPayGroupId);
-    }
-
-    if (!channel) {
-      return res.json({ code: 1005, msg: '支付通道不存在或已关闭' });
-    }
-
-    // 检查金额限制（只有限额大于0时才检查）
-    const moneyFloat = parseFloat(money);
-    const minAmount = parseFloat(channel.min_amount) || 0;
-    const maxAmount = parseFloat(channel.max_amount) || 0;
-    if (minAmount > 0 && moneyFloat < minAmount) {
-      return res.json({ code: 1006, msg: `支付金额不能小于 ${minAmount} 元` });
-    }
-    if (maxAmount > 0 && moneyFloat > maxAmount) {
-      return res.json({ code: 1007, msg: `支付金额不能大于 ${maxAmount} 元` });
-    }
-
-    // 获取费率：商户个人费率优先，否则用支付组费率
-    const feeRate = await getMerchantFeeRate(merchant, type);
-    const feePayer = merchant.fee_payer || 'merchant';
-
-    // 创建订单（或复用已存在的未支付订单）
-    const clientIp = clientip || getClientIP(req);
-    const orderResult = await createOrder({
-      merchantId: merchant.user_id,  // orders.merchant_id 存储 users.id
-      channelId: channel.id,
-      tradeNo: generateTradeNo(),
-      outTradeNo: out_trade_no,
-      type,
-      name,
-      money: moneyFloat,
-      clientIp,
-      device: device || 'pc',
-      notifyUrl: notify_url,
-      returnUrl: return_url || '',
-      feeRate,
-      feePayer,
-      payGroupIdSnapshot: merchantPayGroupId,
-      certInfo  // 买家身份限制信息
-    });
-    const { orderId, tradeNo } = orderResult;
-
-    // 保存额外参数到param字段
-    if (auth_code || sub_openid || sub_appid || param) {
-      const extendParams = JSON.stringify({ auth_code, sub_openid, sub_appid, param });
-      await db.query(
-        'UPDATE orders SET param = ? WHERE id = ?',
-        [extendParams, orderId]
-      );
-    }
-
-    // 根据method决定返回方式
-    const methodType = method || 'web';
-    let payUrl = '';
-    let payType = 'jump';
-    
-    // 获取基础URL（使用请求的域名）
-    const protocol = req.get('x-forwarded-proto') || req.protocol;
-    const host = req.get('host');
-    const baseUrl = `${protocol}://${host}`;
-
-    // 根据不同的method类型生成不同的支付信息
-    switch (methodType) {
-      case 'web':
-      case 'jump':
-        payUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`;
-        payType = 'jump';
-        break;
-      case 'scan':
-        // 扫码支付，返回二维码
-        payUrl = `${baseUrl}/api/pay/qrcode?trade_no=${tradeNo}`;
-        payType = 'qrcode';
-        break;
-      case 'jsapi':
-        // JSAPI支付，需要返回支付参数
-        payUrl = `${baseUrl}/api/pay/jsapi?trade_no=${tradeNo}`;
-        payType = 'jsapi';
-        break;
-      case 'app':
-        // APP支付
-        payUrl = `${baseUrl}/api/pay/app?trade_no=${tradeNo}`;
-        payType = 'app';
-        break;
-      case 'applet':
-        // 小程序支付
-        payUrl = `${baseUrl}/api/pay/applet?trade_no=${tradeNo}`;
-        payType = 'wxapp';
-        break;
-      default:
-        payUrl = `${baseUrl}/api/pay/cashier?trade_no=${tradeNo}&pay_type=${encodeURIComponent(type)}`;
-        payType = 'jump';
-    }
-
-    // 构建V2响应
-    const responseTimestamp = Math.floor(Date.now() / 1000);
-    const responseData = {
-      code: 0,
-      msg: 'success',
-      timestamp: responseTimestamp,
-      trade_no: tradeNo,
-      money: moneyFloat.toFixed(2),
-      pay_type: payType,
-      pay_url: payUrl
-    };
-
-    // 如果平台配置了RSA私钥，则对响应签名
-    if (merchant.rsa_private_key) {
-      const signData = { 
-        trade_no: tradeNo, 
-        money: moneyFloat.toFixed(2), 
-        pay_type: payType,
-        timestamp: responseTimestamp
-      };
-      responseData.sign = makeSignRSA(signData, merchant.rsa_private_key);
-    }
-
-    res.json(responseData);
-
-  } catch (error) {
-    console.error('V2 Create Error:', error);
-    res.json({ code: 9999, msg: '系统错误' });
-  }
+// ==================== V2 接口（兼容入口）===================
+
+// V2 统一下单 - 委托统一处理逻辑
+router.all('/v2/create', async (req, res) => {
+  return handleMapi(req, res);
 });
 
 // V2 订单查询
@@ -3645,18 +3139,78 @@ router.post('/generate_keys', async (req, res) => {
 
 // ==================== 统一支付接口（同时支持 V1/V2，根据 timestamp 自动切换）===================
 
+function isBlankParam(value) {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
+function getMissingRequiredFields(params, requiredFields) {
+  return requiredFields.filter((field) => isBlankParam(params[field]));
+}
+
+function safeHostFromUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return '';
+  }
+
+  try {
+    return new URL(rawUrl).host;
+  } catch (error) {
+    return 'invalid-url';
+  }
+}
+
+function buildRequestLogSnapshot(params) {
+  return {
+    pid: params.pid || '',
+    out_trade_no: params.out_trade_no || '',
+    type: params.type || '',
+    money: params.money || '',
+    notify_host: safeHostFromUrl(params.notify_url),
+    return_host: safeHostFromUrl(params.return_url),
+    clientip: params.clientip || '',
+    sign_type: params.sign_type || '',
+    sign_length: params.sign ? String(params.sign).length : 0,
+    fields: Object.keys(params).sort()
+  };
+}
+
+function logMissingParams(endpoint, req, params, missingFields) {
+  console.warn('[PayValidation] Missing required params', {
+    endpoint,
+    ip: getClientIP(req),
+    missing_fields: missingFields,
+    request: buildRequestLogSnapshot(params)
+  });
+}
+
+function logSignContext(endpoint, signType, signParams, providedSign, signValid) {
+  console.log('[PayValidation] Sign verify result', {
+    endpoint,
+    sign_type: signType,
+    sign_valid: signValid,
+    sign_param_keys: Object.keys(signParams).sort(),
+    provided_sign_length: providedSign ? String(providedSign).length : 0
+  });
+}
+
 // 页面跳转支付处理函数 - 统一处理 /submit 和 /submit.php
 async function handleSubmit(req, res) {
   try {
     const params = { ...req.query, ...req.body };
     const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, timestamp, sitename, param, channel_id, cert_no, cert_name, min_age } = params;
 
-    // 判断是否为 V2 模式（带 timestamp）
-    const isV2 = !!timestamp;
+    // 判断是否为 V2 模式（/v2/* 路由或显式携带 timestamp）
+    const isV2 = req.path.startsWith('/v2/') || !!timestamp;
 
-    // 参数验证（type可选，不传则跳转收银台选择）
-    if (!pid || !out_trade_no || !notify_url || !name || !money || !sign) {
-      return res.status(400).send('缺少必要参数');
+    // V1 submit: type可选，return_url必填；V2 在此基础上额外要求 timestamp
+    const requiredFields = ['pid', 'out_trade_no', 'notify_url', 'return_url', 'name', 'money', 'sign'];
+    if (isV2) {
+      requiredFields.push('timestamp');
+    }
+    const missingFields = getMissingRequiredFields(params, requiredFields);
+    if (missingFields.length > 0) {
+      logMissingParams('submit', req, params, missingFields);
+      return res.status(400).json({ code: -1, msg: '缺少必要参数', missing_fields: missingFields });
     }
 
     // V2 接口验证时间戳
@@ -3706,6 +3260,7 @@ async function handleSubmit(req, res) {
       signValid = verifySignMD5(signParams, sign, merchant.api_key);
     }
 
+    logSignContext('submit', effectiveSignType, signParams, sign, signValid);
     if (!signValid) {
       return res.status(400).send('签名验证失败');
     }
@@ -3784,12 +3339,18 @@ async function handleMapi(req, res) {
     const params = { ...req.query, ...req.body };
     const { pid, type, out_trade_no, notify_url, return_url, name, money, sign, sign_type, timestamp, device, clientip, method, sitename, param, channel_id, sub_openid, sub_appid, auth_code, cert_no, cert_name, min_age } = params;
 
-    // 判断是否为 V2 模式（带 timestamp）
-    const isV2 = !!timestamp;
+    // 判断是否为 V2 模式（/v2/* 路由或显式携带 timestamp）
+    const isV2 = req.path.startsWith('/v2/') || !!timestamp;
 
-    // 参数验证
-    if (!pid || !out_trade_no || !notify_url || !name || !money || !sign) {
-      return res.json({ code: -1, msg: '缺少必要参数' });
+    // V1 mapi: type和clientip必填；V2 在此基础上额外要求 timestamp
+    const requiredFields = ['pid', 'type', 'out_trade_no', 'notify_url', 'name', 'money', 'clientip', 'sign'];
+    if (isV2) {
+      requiredFields.push('timestamp');
+    }
+    const missingFields = getMissingRequiredFields(params, requiredFields);
+    if (missingFields.length > 0) {
+      logMissingParams('mapi', req, params, missingFields);
+      return res.json({ code: -1, msg: '缺少必要参数', missing_fields: missingFields });
     }
 
     // V2 接口验证时间戳
@@ -3843,6 +3404,7 @@ async function handleMapi(req, res) {
       signValid = verifySignMD5(signParams, sign, merchant.api_key);
     }
 
+    logSignContext('mapi', effectiveSignType, signParams, sign, signValid);
     if (!signValid) {
       return res.json({ code: -1, msg: '签名验证失败' });
     }
@@ -3984,11 +3546,17 @@ async function handleQuery(req, res) {
     const params = { ...req.query, ...req.body };
     const { pid, trade_no, out_trade_no, sign, sign_type, timestamp } = params;
 
-    // 判断是否为 V2 模式
-    const isV2 = !!timestamp;
+    // 判断是否为 V2 模式（/v2/* 路由或显式携带 timestamp）
+    const isV2 = req.path.startsWith('/v2/') || !!timestamp;
 
-    if (!pid || !sign) {
-      return res.json({ code: -1, msg: '缺少必要参数' });
+    const queryRequired = ['pid', 'sign'];
+    if (isV2) {
+      queryRequired.push('timestamp');
+    }
+    const missingFields = getMissingRequiredFields(params, queryRequired);
+    if (missingFields.length > 0) {
+      logMissingParams('query', req, params, missingFields);
+      return res.json({ code: -1, msg: '缺少必要参数', missing_fields: missingFields });
     }
 
     if (!trade_no && !out_trade_no) {
