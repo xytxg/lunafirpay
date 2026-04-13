@@ -10,6 +10,14 @@ function isValidDirectToken(token) {
   return /^[A-Za-z0-9]{24}$/.test(token) || /^[A-Za-z0-9]{32}$/.test(token);
 }
 
+router.get('/', (req, res) => {
+  return res.render('error', {
+    message: '请使用完整收款链接访问，例如 /direct/{token}',
+    code: 'DIRECT_TOKEN_REQUIRED',
+    backUrl: null
+  });
+});
+
 // 直接收款页
 router.get('/:token', async (req, res) => {
   try {
@@ -30,6 +38,7 @@ router.get('/:token', async (req, res) => {
     let linkExpiresAt = null;
     let fixedReason = '';
     let fixedLinkId = null;
+    let fixedUsageMode = 'single_use';
 
     if (token.length === 24) {
       const [rows] = await db.query(
@@ -52,7 +61,7 @@ router.get('/:token', async (req, res) => {
     } else {
       mode = 'fixed';
       const [rows] = await db.query(
-        `SELECT dl.id, dl.merchant_user_id, dl.fixed_amount, dl.reason, dl.expires_at, dl.is_enabled,
+        `SELECT dl.id, dl.merchant_user_id, dl.fixed_amount, dl.reason, dl.usage_mode, dl.expires_at, dl.is_enabled,
                 u.merchant_name, m.status AS merchant_status
          FROM direct_links dl
          INNER JOIN users u ON u.id = dl.merchant_user_id
@@ -69,6 +78,7 @@ router.get('/:token', async (req, res) => {
       const link = rows[0];
       merchant = { user_id: link.merchant_user_id, merchant_name: link.merchant_name, merchant_status: link.merchant_status };
       fixedLinkId = link.id;
+      fixedUsageMode = link.usage_mode || 'single_use';
 
       if (link.is_enabled !== 1) {
         return res.render('error', { message: '该固定链接已停用', code: 'DIRECT_FIXED_DISABLED', backUrl: null });
@@ -105,7 +115,7 @@ router.get('/:token', async (req, res) => {
       if (latestOrderRows.length > 0) {
         const latestOrder = latestOrderRows[0];
 
-        if (Number(latestOrder.status) === 1) {
+        if (fixedUsageMode === 'single_use' && Number(latestOrder.status) === 1) {
           return res.redirect(`/api/pay/success?trade_no=${encodeURIComponent(latestOrder.trade_no)}`);
         }
 

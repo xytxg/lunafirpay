@@ -30,6 +30,7 @@ function logCleanupResponse(tag, result) {
       merchant_count: result?.data?.merchant_count,
       preview: result?.data?.preview,
       ordersAffected: result?.data?.ordersAffected,
+      directLinksAffected: result?.data?.directLinksAffected,
       settlementsAffected: result?.data?.settlementsAffected,
       totalAffected: result?.data?.totalAffected
     };

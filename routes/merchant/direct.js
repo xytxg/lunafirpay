@@ -73,11 +73,7 @@ router.get('/direct/config', requireMerchantRamPermission('settings'), async (re
 // 启用默认直接收款链接（24位Token，一经生成永久不变）
 router.post('/direct/enable', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
-<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
-
-=======
->>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
 
     const [users] = await db.query(
@@ -118,11 +114,7 @@ router.post('/direct/enable', requireMerchantRamPermission('settings'), async (r
 // 关闭默认直接收款链接
 router.post('/direct/disable', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
-<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
-
-=======
->>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     await db.query('UPDATE users SET direct_pay_enabled = 0 WHERE id = ?', [user_id]);
     res.json({ code: 0, msg: '已关闭直接收款' });
@@ -132,17 +124,46 @@ router.post('/direct/disable', requireMerchantRamPermission('settings'), async (
   }
 });
 
+// 更换默认直接收款链接Token
+router.post('/direct/reset-token', requireMerchantRamPermission('settings'), async (req, res) => {
+  try {
+    if (!(await ensureDirectPayFeatureEnabled(res))) return;
+    const { user_id } = req.user;
+
+    const [users] = await db.query(
+      'SELECT id FROM users WHERE id = ? LIMIT 1',
+      [user_id]
+    );
+    if (users.length === 0) {
+      return res.json({ code: -1, msg: '商户不存在' });
+    }
+
+    const token = await generateUniqueToken(24, 'users', 'direct_pay_token');
+    await db.query('UPDATE users SET direct_pay_token = ?, direct_pay_enabled = 1 WHERE id = ?', [token, user_id]);
+
+    const url = buildDirectUrl(req, token);
+    res.json({
+      code: 0,
+      msg: '收款链接已更换',
+      data: {
+        token,
+        url,
+        qrUrl: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`
+      }
+    });
+  } catch (error) {
+    console.error('更换默认收款链接失败:', error);
+    res.json({ code: -1, msg: error.message || '更换失败' });
+  }
+});
+
 // 固定金额链接列表
 router.get('/direct/links', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
-<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
-
-=======
->>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     const [rows] = await db.query(
-      `SELECT dl.id, dl.token, dl.fixed_amount, dl.expire_hours, dl.reason, dl.expires_at, dl.is_enabled, dl.created_at,
+      `SELECT dl.id, dl.token, dl.fixed_amount, dl.expire_hours, dl.reason, dl.usage_mode, dl.expires_at, dl.is_enabled, dl.created_at,
               CASE WHEN dl.expires_at IS NULL OR dl.expires_at <= NOW() THEN 1 ELSE 0 END AS is_expired,
               EXISTS(
                 SELECT 1
@@ -166,6 +187,7 @@ router.get('/direct/links', requireMerchantRamPermission('settings'), async (req
       const url = buildDirectUrl(req, item.token);
       return {
         ...item,
+        usage_mode: item.usage_mode || 'single_use',
         reason: item.reason || '',
         url,
         success_url: item.paid_trade_no ? `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}/api/pay/success?trade_no=${encodeURIComponent(item.paid_trade_no)}` : '',
@@ -183,22 +205,22 @@ router.get('/direct/links', requireMerchantRamPermission('settings'), async (req
 // 创建固定金额链接（32位Token）
 router.post('/direct/links', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
-<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
-
-=======
->>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
-    const { amount, expireHours, reason } = req.body;
+    const { amount, expireHours, reason, usageMode } = req.body;
 
     const fixedAmount = Number(amount);
     const hours = parseInt(expireHours, 10);
+    const mode = usageMode === 'multi_use' ? 'multi_use' : 'single_use';
 
     if (!Number.isFinite(fixedAmount) || fixedAmount <= 0) {
       return res.json({ code: -1, msg: '固定金额必须大于0' });
     }
-    if (!Number.isInteger(hours) || hours < 1 || hours > 24) {
-      return res.json({ code: -1, msg: '有效期小时必须在1-24之间' });
+    if (!Number.isInteger(hours) || hours < 1 || hours > 720) {
+      return res.json({ code: -1, msg: '有效期小时必须在1-720之间' });
+    }
+    if (usageMode !== undefined && !['single_use', 'multi_use'].includes(String(usageMode))) {
+      return res.json({ code: -1, msg: '使用策略无效' });
     }
 
     const reasonText = typeof reason === 'string' ? reason.trim() : '';
@@ -209,9 +231,9 @@ router.post('/direct/links', requireMerchantRamPermission('settings'), async (re
     const token = await generateUniqueToken(32, 'direct_links', 'token');
 
     await db.query(
-      `INSERT INTO direct_links (merchant_user_id, token, fixed_amount, expire_hours, reason, expires_at, is_enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 1, NOW())`,
-      [user_id, token, fixedAmount.toFixed(2), hours, reasonText || null, hours]
+      `INSERT INTO direct_links (merchant_user_id, token, fixed_amount, expire_hours, reason, usage_mode, expires_at, is_enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR), 1, NOW())`,
+      [user_id, token, fixedAmount.toFixed(2), hours, reasonText || null, mode, hours]
     );
 
     const url = buildDirectUrl(req, token);
@@ -233,11 +255,7 @@ router.post('/direct/links', requireMerchantRamPermission('settings'), async (re
 // 启用/停用固定金额链接
 router.post('/direct/links/:id/toggle', requireMerchantRamPermission('settings'), async (req, res) => {
   try {
-<<<<<<< HEAD
     if (!(await ensureDirectPayFeatureEnabled(res))) return;
-
-=======
->>>>>>> 2456f0340fc711724b41030eb74c610a464d7df1
     const { user_id } = req.user;
     const id = parseInt(req.params.id, 10);
     const enabled = req.body && (req.body.enabled === 1 || req.body.enabled === true || req.body.enabled === '1') ? 1 : 0;
@@ -247,7 +265,7 @@ router.post('/direct/links/:id/toggle', requireMerchantRamPermission('settings')
     }
 
     const [rows] = await db.query(
-      `SELECT dl.expires_at,
+      `SELECT dl.expires_at, dl.usage_mode,
               EXISTS(
                 SELECT 1
                 FROM orders o
@@ -264,7 +282,8 @@ router.post('/direct/links/:id/toggle', requireMerchantRamPermission('settings')
     }
 
     const link = rows[0];
-    if (Number(link.is_paid) === 1) {
+    const usageMode = link.usage_mode || 'single_use';
+    if (usageMode === 'single_use' && Number(link.is_paid) === 1) {
       return res.json({ code: -1, msg: '该链接已支付，状态已锁定' });
     }
 

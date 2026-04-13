@@ -78,7 +78,7 @@ class RecordCleanupService {
     await db.query(
       `INSERT IGNORE INTO cleanup_task_config
        (id, enabled, run_time, merchant_scope, merchant_ids, cleanup_orders, order_statuses, cleanup_settlements)
-       VALUES (1, 0, '02:00', 'all', JSON_ARRAY(), 0, JSON_OBJECT('statuses', JSON_ARRAY(), 'cleanup_retention_days', 30), 0)`
+       VALUES (1, 0, '02:00', 'all', JSON_ARRAY(), 0, JSON_OBJECT('statuses', JSON_ARRAY(), 'cleanup_retention_days', 30, 'cleanup_expired_direct_links', false), 0)`
     );
   }
 
@@ -91,6 +91,7 @@ class RecordCleanupService {
     let cleanupRetentionDays = 30;
     let cleanupTestOrders = false;
     let cleanupUnnotifiedPaid = false;
+    let cleanupExpiredDirectLinks = false;
     let cleanupSettlementScopes = [];
 
     if (rawOrderConfig) {
@@ -112,6 +113,7 @@ class RecordCleanupService {
         );
         cleanupTestOrders = parsed.cleanup_test_orders === true || parsed.cleanup_test_orders === 1;
         cleanupUnnotifiedPaid = parsed.cleanup_unnotified_paid === true || parsed.cleanup_unnotified_paid === 1;
+        cleanupExpiredDirectLinks = parsed.cleanup_expired_direct_links === true || parsed.cleanup_expired_direct_links === 1;
         cleanupSettlementScopes = normalizeSettlementCleanupScopes(
           parsed.cleanup_settlement_statuses,
           Number(row.cleanup_settlements) === 1
@@ -134,6 +136,7 @@ class RecordCleanupService {
       cleanup_retention_days: cleanupRetentionDays,
       cleanup_test_orders: cleanupTestOrders,
       cleanup_unnotified_paid: cleanupUnnotifiedPaid,
+      cleanup_expired_direct_links: cleanupExpiredDirectLinks,
       cleanup_settlements: cleanupSettlementScopes.length > 0,
       cleanup_settlement_statuses: cleanupSettlementScopes,
       last_run_date: row.last_run_date || null,
@@ -152,6 +155,7 @@ class RecordCleanupService {
       toNonNegativeInt(payload.order_retention_days, toNonNegativeInt(payload.settlement_retention_days, 30))
     ));
     const cleanupTestOrders = payload.cleanup_test_orders === true || payload.cleanup_test_orders === 1;
+    const cleanupExpiredDirectLinks = payload.cleanup_expired_direct_links === true || payload.cleanup_expired_direct_links === 1;
     const cleanupSettlementScopes = normalizeSettlementCleanupScopes(
       payload.cleanup_settlement_statuses,
       payload.cleanup_settlements === true || payload.cleanup_settlements === 1
@@ -170,7 +174,8 @@ class RecordCleanupService {
       order_statuses: JSON.stringify({
         statuses: orderStatuses,
         cleanup_retention_days: cleanupRetentionDays,
-        cleanup_test_orders: cleanupTestOrders
+        cleanup_test_orders: cleanupTestOrders,
+        cleanup_expired_direct_links: cleanupExpiredDirectLinks
         ,cleanup_unnotified_paid: cleanupUnnotifiedPaid,
         cleanup_settlement_statuses: cleanupSettlementScopes
       }),
@@ -344,6 +349,7 @@ class RecordCleanupService {
     const includeStatusOrders = cleanupOrders && orderStatuses.length > 0;
     const includeOrderCleanup = cleanupOrders || cleanupUnnotifiedPaid;
     const cleanupTestOrders = options.cleanup_test_orders === true || options.cleanup_test_orders === 1;
+    const cleanupExpiredDirectLinks = options.cleanup_expired_direct_links === true || options.cleanup_expired_direct_links === 1;
     const cleanupSettlementScopes = normalizeSettlementCleanupScopes(
       options.cleanup_settlement_statuses,
       options.cleanup_settlements === true || options.cleanup_settlements === 1
@@ -363,7 +369,7 @@ class RecordCleanupService {
       return { code: -1, msg: '开始日期不能晚于结束日期' };
     }
 
-    if (!includeOrderCleanup && !cleanupSettlements && !cleanupTestOrders) {
+    if (!includeOrderCleanup && !cleanupSettlements && !cleanupTestOrders && !cleanupExpiredDirectLinks) {
       return { code: -1, msg: '请至少选择一种清理操作' };
     }
 
@@ -394,12 +400,14 @@ class RecordCleanupService {
 
     let orderCount = 0;
     let settlementCount = 0;
+    let directLinkCount = 0;
     const breakdown = {
       paid_success: 0,
       unpaid: 0,
       refunded: 0,
       unnotified_paid: 0,
       test_orders: 0,
+      expired_direct_links: 0,
       settlements: 0,
       settlements_completed: 0,
       settlements_unfinished: 0
@@ -413,6 +421,32 @@ class RecordCleanupService {
     if (cleanupSettlements) {
       const [rows] = await db.query(`SELECT COUNT(*) AS total FROM settle_records WHERE ${filter.settleWhere}`, filter.settleParams);
       settlementCount = Number(rows[0]?.total || 0);
+    }
+
+    const directLinkConditions = ['expires_at IS NOT NULL'];
+    const directLinkParams = [];
+    if (merchantIds.length > 0) {
+      directLinkConditions.push(`merchant_user_id IN (${merchantIds.map(() => '?').join(',')})`);
+      directLinkParams.push(...merchantIds);
+    }
+    if (startDate && endDate) {
+      directLinkConditions.push('expires_at >= ? AND expires_at < DATE_ADD(?, INTERVAL 1 DAY)');
+      directLinkParams.push(startDate, endDate);
+    } else if (cleanupRetentionDays === 0) {
+      directLinkConditions.push('expires_at < NOW()');
+    } else {
+      directLinkConditions.push('expires_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)');
+      directLinkParams.push(cleanupRetentionDays);
+    }
+    const directLinkWhere = directLinkConditions.join(' AND ');
+
+    if (cleanupExpiredDirectLinks) {
+      const [rows] = await db.query(
+        `SELECT COUNT(*) AS total FROM direct_links WHERE ${directLinkWhere}`,
+        directLinkParams
+      );
+      directLinkCount = Number(rows[0]?.total || 0);
+      breakdown.expired_direct_links = directLinkCount;
     }
 
     // 预估明细拆分，方便定位具体命中项
@@ -535,6 +569,7 @@ class RecordCleanupService {
         order_statuses: orderStatuses,
         cleanup_unnotified_paid: cleanupUnnotifiedPaid,
         cleanup_test_orders: cleanupTestOrders,
+        cleanup_expired_direct_links: cleanupExpiredDirectLinks,
         cleanup_settlements: cleanupSettlements,
         cleanup_settlement_statuses: cleanupSettlementScopes,
         start_date: startDate,
@@ -543,7 +578,8 @@ class RecordCleanupService {
         preview: {
           orders: orderCount,
           settlements: settlementCount,
-          total: orderCount + settlementCount
+          direct_links: directLinkCount,
+          total: orderCount + settlementCount + directLinkCount
         }
       }
     };
@@ -600,6 +636,7 @@ class RecordCleanupService {
     const includeStatusOrders = cleanupOrders && orderStatuses.length > 0;
     const includeOrderCleanup = cleanupOrders || cleanupUnnotifiedPaid;
     const cleanupTestOrders = options.cleanup_test_orders === true || options.cleanup_test_orders === 1;
+    const cleanupExpiredDirectLinks = options.cleanup_expired_direct_links === true || options.cleanup_expired_direct_links === 1;
     const cleanupSettlementScopes = normalizeSettlementCleanupScopes(
       options.cleanup_settlement_statuses,
       options.cleanup_settlements === true || options.cleanup_settlements === 1
@@ -621,7 +658,7 @@ class RecordCleanupService {
       return { code: -1, msg: '开始日期不能晚于结束日期' };
     }
 
-    if (!includeOrderCleanup && !cleanupSettlements && !cleanupTestOrders) {
+    if (!includeOrderCleanup && !cleanupSettlements && !cleanupTestOrders && !cleanupExpiredDirectLinks) {
       this.running = false;
       return { code: -1, msg: '请至少选择一种清理操作' };
     }
@@ -659,6 +696,7 @@ class RecordCleanupService {
 
       let ordersAffected = 0;
       let settlementsAffected = 0;
+      let directLinksAffected = 0;
 
       if (includeStatusOrders || cleanupTestOrders || cleanupUnnotifiedPaid) {
         const [result] = await conn.query(
@@ -674,6 +712,32 @@ class RecordCleanupService {
           filter.settleParams
         );
         settlementsAffected = Number(result.affectedRows || 0);
+      }
+
+      if (cleanupExpiredDirectLinks) {
+        const directLinkConditions = ['expires_at IS NOT NULL'];
+        const directLinkParams = [];
+
+        if (merchantIds.length > 0) {
+          directLinkConditions.push(`merchant_user_id IN (${merchantIds.map(() => '?').join(',')})`);
+          directLinkParams.push(...merchantIds);
+        }
+
+        if (startDate && endDate) {
+          directLinkConditions.push('expires_at >= ? AND expires_at < DATE_ADD(?, INTERVAL 1 DAY)');
+          directLinkParams.push(startDate, endDate);
+        } else if (cleanupRetentionDays === 0) {
+          directLinkConditions.push('expires_at < NOW()');
+        } else {
+          directLinkConditions.push('expires_at < DATE_SUB(CURDATE(), INTERVAL ? DAY)');
+          directLinkParams.push(cleanupRetentionDays);
+        }
+
+        const [result] = await conn.query(
+          `DELETE FROM direct_links WHERE ${directLinkConditions.join(' AND ')}`,
+          directLinkParams
+        );
+        directLinksAffected = Number(result.affectedRows || 0);
       }
 
       await conn.commit();
@@ -697,7 +761,8 @@ class RecordCleanupService {
         data: {
           ordersAffected,
           settlementsAffected,
-          totalAffected: ordersAffected + settlementsAffected,
+          directLinksAffected,
+          totalAffected: ordersAffected + settlementsAffected + directLinksAffected,
           merchantCount: merchantIds.length
         }
       };
@@ -798,6 +863,7 @@ class RecordCleanupService {
       order_statuses: config.order_statuses,
       cleanup_unnotified_paid: config.cleanup_unnotified_paid,
       cleanup_test_orders: config.cleanup_test_orders,
+      cleanup_expired_direct_links: config.cleanup_expired_direct_links,
       cleanup_retention_days: config.cleanup_retention_days,
       cleanup_settlements: config.cleanup_settlements
     });

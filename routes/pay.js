@@ -1752,7 +1752,7 @@ router.post('/direct/create-order', async (req, res) => {
     } else {
       directMode = 'fixed';
       const [rows] = await db.query(
-        `SELECT dl.id, dl.merchant_user_id, dl.fixed_amount, dl.expire_hours, dl.expires_at, dl.is_enabled,
+        `SELECT dl.id, dl.merchant_user_id, dl.fixed_amount, dl.expire_hours, dl.usage_mode, dl.expires_at, dl.is_enabled,
                 m.notify_url, m.return_url, m.status, m.fee_rate AS merchant_fee_rate,
                 m.fee_rates AS merchant_fee_rates, m.fee_payer, m.pay_group_id
          FROM direct_links dl
@@ -1796,26 +1796,29 @@ router.post('/direct/create-order', async (req, res) => {
     const host = req.get('host');
 
     if (directMode === 'fixed' && directLinkId) {
-      const [paidRows] = await db.query(
-        `SELECT trade_no
-         FROM orders
-         WHERE merchant_id = ? AND direct_mode = 'fixed' AND direct_link_id = ? AND status = 1
-         ORDER BY paid_at DESC, id DESC
-         LIMIT 1`,
-        [merchant.user_id, directLinkId]
-      );
+      const usageMode = merchant.usage_mode || 'single_use';
+      if (usageMode === 'single_use') {
+        const [paidRows] = await db.query(
+          `SELECT trade_no
+           FROM orders
+           WHERE merchant_id = ? AND direct_mode = 'fixed' AND direct_link_id = ? AND status = 1
+           ORDER BY paid_at DESC, id DESC
+           LIMIT 1`,
+          [merchant.user_id, directLinkId]
+        );
 
-      if (paidRows.length > 0) {
-        const paidTradeNo = paidRows[0].trade_no;
-        const successUrl = `${protocol}://${host}/api/pay/success?trade_no=${encodeURIComponent(paidTradeNo)}`;
-        return res.json({
-          code: 0,
-          msg: 'success',
-          data: {
-            trade_no: paidTradeNo,
-            success_url: successUrl
-          }
-        });
+        if (paidRows.length > 0) {
+          const paidTradeNo = paidRows[0].trade_no;
+          const successUrl = `${protocol}://${host}/api/pay/success?trade_no=${encodeURIComponent(paidTradeNo)}`;
+          return res.json({
+            code: 0,
+            msg: 'success',
+            data: {
+              trade_no: paidTradeNo,
+              success_url: successUrl
+            }
+          });
+        }
       }
 
       const [existingRows] = await db.query(

@@ -175,8 +175,9 @@ CREATE TABLE IF NOT EXISTS `direct_links` (
   `merchant_user_id` int NOT NULL COMMENT '商户 users.id',
   `token` varchar(32) NOT NULL COMMENT '固定金额直链Token（32位）',
   `fixed_amount` decimal(10,2) NOT NULL COMMENT '固定金额',
-  `expire_hours` tinyint unsigned NOT NULL COMMENT '有效期小时（1-24）',
+  `expire_hours` smallint unsigned NOT NULL COMMENT '有效期小时（1-720）',
   `reason` varchar(255) DEFAULT NULL COMMENT '收款理由（可选）',
+  `usage_mode` enum('single_use','multi_use') NOT NULL DEFAULT 'single_use' COMMENT '使用策略：single_use一次性，multi_use长期有效',
   `expires_at` datetime NOT NULL COMMENT '链接过期时间',
   `is_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否启用',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -478,6 +479,41 @@ PREPARE stmt FROM @preparedStatement;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- 扩展 direct_links.expire_hours 到 1-720（如果仍是 tinyint 则升级为 smallint）
+SET @tablename = 'direct_links';
+SET @columnname = 'expire_hours';
+SET @preparedStatement = (SELECT IF(
+  EXISTS(
+    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = @tablename
+      AND COLUMN_NAME = @columnname
+      AND DATA_TYPE = 'tinyint'
+  ),
+  CONCAT('ALTER TABLE `', @tablename, '` MODIFY COLUMN `', @columnname, '` SMALLINT UNSIGNED NOT NULL COMMENT ''有效期小时（1-720）'''),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 为 direct_links 表添加 usage_mode 列（如果不存在）
+SET @tablename = 'direct_links';
+SET @columnname = 'usage_mode';
+SET @preparedStatement = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @tablename AND COLUMN_NAME = @columnname) = 0,
+  CONCAT('ALTER TABLE `', @tablename, '` ADD COLUMN `', @columnname, '` enum(''single_use'',''multi_use'') NOT NULL DEFAULT ''single_use'' COMMENT ''使用策略：single_use一次性，multi_use长期有效'' AFTER `reason`'),
+  'SELECT 1'
+));
+PREPARE stmt FROM @preparedStatement;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 兜底回填 direct_links.usage_mode 为空值
+UPDATE direct_links
+SET usage_mode = 'single_use'
+WHERE usage_mode IS NULL OR usage_mode NOT IN ('single_use', 'multi_use');
+
 -- 为 users 表添加 merchant_name 列（如果不存在）
 SET @sql = (SELECT IF(
   NOT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
@@ -617,8 +653,9 @@ CREATE TABLE IF NOT EXISTS `direct_links` (
   `merchant_user_id` int NOT NULL COMMENT '商户 users.id',
   `token` varchar(32) NOT NULL COMMENT '固定金额直链Token（32位）',
   `fixed_amount` decimal(10,2) NOT NULL COMMENT '固定金额',
-  `expire_hours` tinyint unsigned NOT NULL COMMENT '有效期小时（1-24）',
+  `expire_hours` smallint unsigned NOT NULL COMMENT '有效期小时（1-720）',
   `reason` varchar(255) DEFAULT NULL COMMENT '收款理由（可选）',
+  `usage_mode` enum('single_use','multi_use') NOT NULL DEFAULT 'single_use' COMMENT '使用策略：single_use一次性，multi_use长期有效',
   `expires_at` datetime NOT NULL COMMENT '链接过期时间',
   `is_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '是否启用',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -756,7 +793,7 @@ VALUES (1, 1, 1, 1, 0);
 
 INSERT IGNORE INTO `cleanup_task_config`
 (`id`, `enabled`, `run_time`, `merchant_scope`, `merchant_ids`, `cleanup_orders`, `order_statuses`, `cleanup_settlements`)
-VALUES (1, 0, '02:00', 'all', JSON_ARRAY(), 0, JSON_OBJECT('statuses', JSON_ARRAY(), 'cleanup_retention_days', 30, 'cleanup_test_orders', false, 'cleanup_unnotified_paid', false), 0);
+VALUES (1, 0, '02:00', 'all', JSON_ARRAY(), 0, JSON_OBJECT('statuses', JSON_ARRAY(), 'cleanup_retention_days', 30, 'cleanup_test_orders', false, 'cleanup_unnotified_paid', false, 'cleanup_expired_direct_links', false), 0);
 
 -- 兜底修正历史定时清理配置：固定全商户，禁用“已支付未回调”定时项
 UPDATE `cleanup_task_config`
@@ -765,7 +802,9 @@ SET `merchant_scope` = 'all',
     `order_statuses` = JSON_SET(
       COALESCE(`order_statuses`, JSON_OBJECT()),
       '$.cleanup_unnotified_paid',
-      false
+      false,
+      '$.cleanup_expired_direct_links',
+      COALESCE(JSON_EXTRACT(`order_statuses`, '$.cleanup_expired_direct_links'), CAST(false AS JSON))
     )
 WHERE `id` = 1;
 

@@ -353,6 +353,8 @@ router.post('/merchants/restore', requireProviderRamPermission('merchant'), asyn
 router.get('/merchants/stats', requireProviderRamPermission('merchant'), async (req, res) => {
   try {
     const { merchantId } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 10));
 
     if (!merchantId) {
       return res.json({ code: -1, msg: '缺少商户ID' });
@@ -373,13 +375,76 @@ router.get('/merchants/stats', requireProviderRamPermission('merchant'), async (
       [merchantId]
     );
 
+    const [userRows] = await db.query(
+      'SELECT direct_pay_token FROM users WHERE id = ? LIMIT 1',
+      [merchantId]
+    );
+    const defaultToken = userRows.length > 0 ? (userRows[0].direct_pay_token || '') : '';
+    const defaultUrl = defaultToken
+      ? `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}/direct/${defaultToken}`
+      : '';
+
+    const [[linksTotalRow]] = await db.query(
+      'SELECT COUNT(*) AS total FROM direct_links WHERE merchant_user_id = ?',
+      [merchantId]
+    );
+    const linksTotal = Number(linksTotalRow?.total || 0);
+
+    const [linkRows] = await db.query(
+      `SELECT id, token, fixed_amount, expire_hours, usage_mode, expires_at, is_enabled, created_at
+       FROM direct_links
+       WHERE merchant_user_id = ?
+       ORDER BY id DESC
+       LIMIT ? OFFSET ?`,
+      [merchantId, pageSize, (page - 1) * pageSize]
+    );
+
+    const linkIds = linkRows.map((item) => item.id);
+    const paidOrdersByLinkId = new Map();
+    if (linkIds.length > 0) {
+      const [paidRows] = await db.query(
+        `SELECT direct_link_id, trade_no, paid_at
+         FROM orders
+         WHERE direct_mode = 'fixed' AND status = 1 AND direct_link_id IN (?)
+         ORDER BY paid_at DESC, id DESC`,
+        [linkIds]
+      );
+
+      paidRows.forEach((item) => {
+        if (!paidOrdersByLinkId.has(item.direct_link_id)) {
+          paidOrdersByLinkId.set(item.direct_link_id, []);
+        }
+        paidOrdersByLinkId.get(item.direct_link_id).push({
+          trade_no: item.trade_no,
+          paid_at: item.paid_at
+        });
+      });
+    }
+
+    const directLinks = linkRows.map((item) => ({
+      ...item,
+      usage_mode: item.usage_mode || 'single_use',
+      url: `${req.get('x-forwarded-proto') || req.protocol}://${req.get('host')}/direct/${item.token}`,
+      is_expired: item.expires_at ? (new Date(item.expires_at).getTime() <= Date.now() ? 1 : 0) : 1,
+      paid_orders: paidOrdersByLinkId.get(item.id) || [],
+      paid_count: (paidOrdersByLinkId.get(item.id) || []).length
+    }));
+
     res.json({
       code: 0,
       data: {
         month_money: monthStats?.money || 0,
         month_fee: monthStats?.fee || 0,
         total_money: totalStats?.money || 0,
-        total_fee: totalStats?.fee || 0
+        total_fee: totalStats?.fee || 0,
+        direct_pay_token: defaultToken,
+        direct_pay_url: defaultUrl,
+        direct_links: {
+          list: directLinks,
+          total: linksTotal,
+          page,
+          pageSize
+        }
       }
     });
   } catch (error) {

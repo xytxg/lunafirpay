@@ -10,7 +10,7 @@ const { requireProviderRamPermission } = require('../auth');
 // 获取交易流水（需要 order 权限）
 router.get('/orders', requireProviderRamPermission('order'), async (req, res) => {
   try {
-    const { page = 1, pageSize = 20, status, startDate, endDate, merchantId, tradeNo } = req.query;
+    const { page = 1, pageSize = 20, status, startDate, endDate, merchantId, tradeNo, directLinkId } = req.query;
     
     // 单服务商模式，不按 provider_id 过滤
     let sql = `SELECT o.id, o.trade_no, o.out_trade_no, o.merchant_id,
@@ -24,7 +24,7 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
                o.money, o.fee_money as fee, o.notify_url, o.return_url,
                o.status, o.order_type, o.created_at, o.paid_at, 
                o.notify_status, o.notify_count, o.notify_time, o.merchant_confirm,
-               o.direct_mode,
+               o.direct_mode, o.direct_token,
                o.refund_status, o.refund_money, o.refund_no, o.refund_at, o.refund_reason,
                u.username as merchant_name,
                pc.channel_name as channel_name, pc.plugin_name as channel_plugin
@@ -66,6 +66,16 @@ router.get('/orders', requireProviderRamPermission('order'), async (req, res) =>
     if (tradeNo) {
       whereConditions += ' AND (o.trade_no LIKE ? OR o.out_trade_no LIKE ?)';
       params.push(`%${tradeNo}%`, `%${tradeNo}%`);
+    }
+
+    if (directLinkId !== undefined && directLinkId !== null && String(directLinkId).trim() !== '') {
+      const linkId = parseInt(String(directLinkId).trim(), 10);
+      if (!Number.isNaN(linkId) && linkId > 0) {
+        whereConditions += ' AND o.direct_link_id = ?';
+        params.push(linkId);
+      } else {
+        whereConditions += ' AND 1=0';
+      }
     }
 
     sql += whereConditions;
