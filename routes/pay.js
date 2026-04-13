@@ -598,15 +598,37 @@ async function createOrder(data) {
   
   if (existingOrders.length > 0) {
     const existingOrder = existingOrders[0];
-    // 复用已存在的订单，更新支付通道和费率信息，以及身份限制信息
+    const existingChannelId = existingOrder.channel_id || null;
+    const existingPayType = existingOrder.pay_type || null;
+    const incomingChannelId = channelId || null;
+    const incomingPayType = type || null;
+    const isLockedOrder = !!existingChannelId;
+    const finalChannelId = isLockedOrder ? existingChannelId : (incomingChannelId || existingChannelId);
+    const finalPayType = isLockedOrder ? (existingPayType || incomingPayType) : (incomingPayType || existingPayType);
+
+    if (isLockedOrder && (incomingChannelId || incomingPayType) && (
+      String(incomingChannelId || '') !== String(existingChannelId || '') ||
+      String(incomingPayType || '') !== String(existingPayType || '')
+    )) {
+      console.warn('[OrderReuse] 已锁定订单忽略外部通道/类型覆盖', {
+        tradeNo: existingOrder.trade_no,
+        outTradeNo,
+        existingChannelId,
+        existingPayType,
+        incomingChannelId,
+        incomingPayType
+      });
+    }
+
+    // 复用已存在订单时，锁定订单不允许改 channel_id/pay_type；未锁定则仅在新值存在时更新
     await db.query(
       `UPDATE orders
        SET channel_id = ?, pay_type = ?, notify_url = ?, return_url = ?, fee_money = ?, real_money = ?, fee_payer = ?, cert_info = ?,
            direct_mode = ?, direct_link_id = ?, direct_token = ?, expire_at = ?
        WHERE id = ?`,
       [
-        channelId,
-        type,
+        finalChannelId,
+        finalPayType,
         notifyUrl,
         returnUrl,
         feeMoney,
@@ -620,7 +642,17 @@ async function createOrder(data) {
         existingOrder.id
       ]
     );
-    console.log('复用已存在订单', { tradeNo: existingOrder.trade_no, outTradeNo, feeMoney, realMoney, feePayer, certInfo });
+    console.log('复用已存在订单', {
+      tradeNo: existingOrder.trade_no,
+      outTradeNo,
+      feeMoney,
+      realMoney,
+      feePayer,
+      certInfo,
+      locked: isLockedOrder,
+      channelId: finalChannelId,
+      payType: finalPayType
+    });
     return { orderId: existingOrder.id, tradeNo: existingOrder.trade_no, isExisting: true };
   }
   
@@ -1501,9 +1533,50 @@ router.get('/cashier', async (req, res) => {
       
       if (channels.length > 0) {
         const channel = channels[0];
+        const orderParam = parseOrderParam(order.param);
+        const cachedLockedPayType = orderParam && orderParam.dopay_cache && typeof orderParam.dopay_cache.pay_type === 'string'
+          ? orderParam.dopay_cache.pay_type.trim()
+          : '';
+        const channelPayTypes = typeof channel.pay_type === 'string'
+          ? channel.pay_type.split(',').map((item) => item.trim()).filter(Boolean)
+          : [];
+        let lockedPayType = typeof order.pay_type === 'string' ? order.pay_type.trim() : '';
+
+        if (!lockedPayType && cachedLockedPayType) {
+          lockedPayType = cachedLockedPayType;
+        }
+        if (!lockedPayType && requestedPayType && channelPayTypes.includes(requestedPayType)) {
+          lockedPayType = requestedPayType;
+        }
+        if (!lockedPayType && channelPayTypes.length === 1) {
+          lockedPayType = channelPayTypes[0];
+        }
+
+        if (!lockedPayType) {
+          console.warn('[Cashier] 锁定通道订单缺少可用 pay_type', {
+            tradeNo: order.trade_no,
+            orderId: order.id,
+            channelId: order.channel_id,
+            channelName: channel.channel_name,
+            channelPayTypes,
+            cachedLockedPayType,
+            requestedPayType
+          });
+          return res.render('error', {
+            message: '订单已锁定通道但缺少支付方式，请联系客服处理',
+            code: 'LOCKED_ORDER_PAY_TYPE_MISSING',
+            backUrl: null
+          });
+        }
+
+        if (order.pay_type !== lockedPayType) {
+          await db.query('UPDATE orders SET pay_type = ? WHERE id = ?', [lockedPayType, order.id]);
+          order.pay_type = lockedPayType;
+        }
+
         lockedPayment = {
           channel_id: order.channel_id,
-          pay_type: order.pay_type,
+          pay_type: lockedPayType,
           plugin_name: channel.plugin_name,
           channel_name: channel.channel_name
         };
@@ -1538,9 +1611,20 @@ router.get('/cashier', async (req, res) => {
     // 获取服务商配置的支付类型列表
     payTypes = await getPayTypesByGroups(forcedGroupId);
 
-    // 收银台允许通过 query 传入 pay_type，命中可用类型时写回订单
+    // 收银台允许通过 query 传入 pay_type，命中可用类型时写回订单（仅未锁定订单）
     let autoPayType = '';
-    if (requestedPayType) {
+    if (requestedPayType && lockedPayment) {
+      if (requestedPayType !== lockedPayment.pay_type) {
+        console.warn('[Cashier] 已锁定订单忽略外部 pay_type', {
+          tradeNo: order.trade_no,
+          orderId: order.id,
+          requestedPayType,
+          lockedPayType: lockedPayment.pay_type,
+          channelId: lockedPayment.channel_id,
+          channelName: lockedPayment.channel_name
+        });
+      }
+    } else if (requestedPayType) {
       const matchedPayType = payTypes.find((p) => p.type_code === requestedPayType);
       if (matchedPayType) {
         if (order.pay_type !== requestedPayType) {
@@ -1596,14 +1680,16 @@ router.get('/cashier', async (req, res) => {
       }
     }
 
-    // 传入 pay_type 时，启用直连模式，但仍复用 cashier.ejs 的统一UI模板
-    if (requestedPayType && autoPayType) {
+    const lockedAutoPayType = lockedPayment && lockedPayment.pay_type ? lockedPayment.pay_type : '';
+
+    // 传入 pay_type 或订单已锁定通道时，启用直连模式（复用 cashier.ejs 的统一UI模板）
+    if ((requestedPayType && autoPayType) || lockedPayment) {
       const displayMerchantName = (order.merchant_name || '').trim() || '在线支付';
       return res.render('cashier', {
         order: { ...order, display_name: displayOrderName },
         payTypes,
         selectedGroupId,
-        autoPayType: autoPayType,
+        autoPayType: lockedAutoPayType || autoPayType,
         directMode: true,
         sitename: displayMerchantName,
         isCrypto: false,
@@ -1662,6 +1748,11 @@ router.post('/select_channel', async (req, res) => {
     // 只有待支付订单可以修改
     if (order.status !== 0) {
       return res.json({ code: 1, msg: '订单状态异常' });
+    }
+
+    // 已锁定通道的订单不允许切换支付方式
+    if (order.channel_id) {
+      return res.json({ code: 1, msg: '订单已锁定通道，不能切换支付方式' });
     }
 
     // 测试订单只能选择测试支付组内的支付方式
@@ -2062,22 +2153,38 @@ router.post('/dopay', async (req, res) => {
 
     let channelConfig;
     let finalPayType;
+    let isLockedChannelOrder = false;
     
     // ========== 检查订单是否已锁定通道 ==========
     if (order.channel_id) {
+      isLockedChannelOrder = true;
       // 订单已选择过通道，使用之前的通道，不允许更改
       const [channels] = await db.query(
         `SELECT *, pay_type as type_code, channel_name as type_name
          FROM provider_channels WHERE id = ?`,
         [order.channel_id]
       );
-      
+
       if (channels.length === 0) {
         return res.json({ code: 1, msg: '支付通道已失效，请联系客服' });
       }
       
       channelConfig = channels[0];
-      finalPayType = order.pay_type;
+      finalPayType = order.pay_type || pay_type;
+      if (pay_type && order.pay_type && pay_type !== order.pay_type) {
+        logChannelSelectionInfo('DoPay 锁定订单忽略外部 pay_type', {
+          tradeNo: order.trade_no,
+          orderId: order.id,
+          requestedPayType: pay_type,
+          lockedPayType: order.pay_type,
+          channelId: channelConfig.id,
+          channelName: channelConfig.channel_name,
+          plugin: channelConfig.plugin_name
+        });
+      }
+      if (!finalPayType) {
+        return res.json({ code: 1, msg: '订单缺少已锁定支付方式，请联系客服处理' });
+      }
       logChannelSelectionInfo('订单已锁定通道', {
         tradeNo: order.trade_no,
         orderId: order.id,
@@ -2178,6 +2285,75 @@ router.post('/dopay', async (req, res) => {
       // 更新 order 对象以便后续使用
       order.real_money = realMoney;
       order.channel_id = channelConfig.id;
+    }
+
+    const getReusableDoPayPayload = () => {
+      if (!isLockedChannelOrder) {
+        return null;
+      }
+      const orderParam = parseOrderParam(order.param);
+      const cached = orderParam && orderParam.dopay_cache ? orderParam.dopay_cache : null;
+      if (!cached || typeof cached !== 'object') {
+        return null;
+      }
+      if (String(cached.channel_id || '') !== String(channelConfig.id || '')) {
+        return null;
+      }
+      if (String(cached.pay_type || '') !== String(finalPayType || '')) {
+        return null;
+      }
+      if (!cached.payload || typeof cached.payload !== 'object') {
+        return null;
+      }
+      if (cached.payload.code !== 0) {
+        return null;
+      }
+      return cached.payload;
+    };
+
+    const persistDoPayPayload = async (payload) => {
+      if (!payload || payload.code !== 0) {
+        return;
+      }
+      try {
+        const orderParam = parseOrderParam(order.param);
+        orderParam.dopay_cache = {
+          channel_id: channelConfig.id,
+          pay_type: finalPayType,
+          plugin_name: channelConfig.plugin_name,
+          updated_at: Math.floor(Date.now() / 1000),
+          payload
+        };
+        const paramRaw = JSON.stringify(orderParam);
+        await db.query('UPDATE orders SET param = ? WHERE id = ?', [paramRaw, order.id]);
+        order.param = paramRaw;
+      } catch (cacheError) {
+        console.warn('[DoPayCache] 保存支付拉起结果失败', {
+          tradeNo: order.trade_no,
+          orderId: order.id,
+          channelId: channelConfig && channelConfig.id,
+          payType: finalPayType,
+          error: cacheError.message
+        });
+      }
+    };
+
+    const sendSuccess = async (payload) => {
+      await persistDoPayPayload(payload);
+      return res.json(payload);
+    };
+
+    const cachedPayload = getReusableDoPayPayload();
+    if (cachedPayload) {
+      logChannelSelectionInfo('DoPay 复用已锁定订单支付结果', {
+        tradeNo: order.trade_no,
+        orderId: order.id,
+        payType: finalPayType,
+        channelId: channelConfig.id,
+        channelName: channelConfig.channel_name,
+        plugin: channelConfig.plugin_name
+      });
+      return res.json(cachedPayload);
     }
 
     // 获取插件
@@ -2323,7 +2499,7 @@ router.post('/dopay', async (req, res) => {
         );
 
       if (isQrcodeImageUrl) {
-        return res.json({ code: 0, msg: 'success', qrcode: jumpUrl, expire_time: order.expire_at || null });
+        return sendSuccess({ code: 0, msg: 'success', qrcode: jumpUrl, expire_time: order.expire_at || null });
       }
 
       // 检查是否是跳转到 qrcode 页面，如果是则直接获取二维码返回
@@ -2339,10 +2515,10 @@ router.post('/dopay', async (req, res) => {
           const qrcodeResult = await plugin.qrcode(pluginConfig, orderInfo, conf);
           
           if (qrcodeResult.type === 'qrcode') {
-            return res.json({ code: 0, msg: 'success', qrcode: qrcodeResult.url, expire_time: order.expire_at || null });
+            return sendSuccess({ code: 0, msg: 'success', qrcode: qrcodeResult.url, expire_time: order.expire_at || null });
           } else if (qrcodeResult.type === 'jump') {
             // 如果 qrcode 方法也返回跳转（如支付宝内打开），则返回跳转
-            return res.json({ code: 0, msg: 'success', pay_url: qrcodeResult.url });
+            return sendSuccess({ code: 0, msg: 'success', pay_url: qrcodeResult.url });
           } else if (qrcodeResult.type === 'error') {
             return res.json({ code: 1, msg: qrcodeResult.msg || '获取二维码失败' });
           }
@@ -2351,26 +2527,26 @@ router.post('/dopay', async (req, res) => {
           // 如果获取二维码失败，降级为跳转
         }
       }
-      return res.json({ code: 0, msg: 'success', pay_url: result.url });
+      return sendSuccess({ code: 0, msg: 'success', pay_url: result.url });
     }
 
     if (result.type === 'qrcode') {
-      return res.json({ code: 0, msg: 'success', qrcode: result.qr_code || result.url, expire_time: order.expire_at || null });
+      return sendSuccess({ code: 0, msg: 'success', qrcode: result.qr_code || result.url, expire_time: order.expire_at || null });
     }
 
     if (result.type === 'html') {
-      return res.json({ code: 0, msg: 'success', html: result.data });
+      return sendSuccess({ code: 0, msg: 'success', html: result.data });
     }
 
     if (result.type === 'scheme') {
-      return res.json({ code: 0, msg: 'success', scheme: result.url });
+      return sendSuccess({ code: 0, msg: 'success', scheme: result.url });
     }
 
     if (result.type === 'page') {
       // 渲染页面类型 - 根据页面类型返回不同数据
       if (result.page === 'alipay_h5') {
         // 支付宝H5唤起APP - 返回数据让前端在页面内显示
-        return res.json({ 
+        return sendSuccess({ 
           code: 0, 
           msg: 'success', 
           alipay_h5: {
@@ -2381,7 +2557,7 @@ router.post('/dopay', async (req, res) => {
         });
       }
       // 其他页面类型 - 跳转到渲染路由
-      return res.json({ 
+      return sendSuccess({ 
         code: 0, 
         msg: 'success', 
         pay_url: `/pay/render/${orderInfo.trade_no}/${result.page}` 
@@ -2390,11 +2566,11 @@ router.post('/dopay', async (req, res) => {
 
     if (result.type === 'app') {
       // APP SDK调用字符串 - 返回给APP使用
-      return res.json({ code: 0, msg: 'success', app_data: result.data });
+      return sendSuccess({ code: 0, msg: 'success', app_data: result.data });
     }
 
     // 默认返回跳转URL
-    return res.json({ code: 0, msg: 'success', pay_url: result.url || result.pay_url });
+    return sendSuccess({ code: 0, msg: 'success', pay_url: result.url || result.pay_url });
 
   } catch (error) {
     console.error('DoPay Error:', {

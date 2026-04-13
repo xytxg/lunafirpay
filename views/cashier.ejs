@@ -805,6 +805,10 @@
       
       // 已锁定的支付信息（订单已选择通道，不可更改）
       var lockedPayment = <%- typeof lockedPayment !== 'undefined' && lockedPayment ? JSON.stringify(lockedPayment) : 'null' %>;
+      if (lockedPayment && lockedPayment.pay_type) {
+        selectedType = lockedPayment.pay_type;
+        autoPayType = lockedPayment.pay_type;
+      }
       
       // 选择支付方式（仅在未锁定时可用）
       document.querySelectorAll('.payment-method').forEach(function(item) {
@@ -1294,9 +1298,12 @@
       }
 
       if (lockedPayment) {
+        selectedType = lockedPayment.pay_type || selectedType;
         // 禁用支付方式选择
         document.querySelectorAll('.payment-method').forEach(function(item) {
-          if (item.dataset.type !== lockedPayment.pay_type) {
+          var isLockedType = item.dataset.type === lockedPayment.pay_type;
+          item.classList.toggle('active', isLockedType);
+          if (!isLockedType) {
             item.style.opacity = '0.5';
             item.style.pointerEvents = 'none';
           }
